@@ -1,0 +1,6 @@
+{
+  "name": "Elite Matrix",
+  "description": "HQ Video Enhancer for professional video enhancement, compression, HQ encoding, and custom export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

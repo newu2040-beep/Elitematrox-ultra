@@ -1,0 +1,257 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitive helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    // 1. UserProfile validation (/users/{userId})
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+               'userId', 'displayName', 'email', 'accountTier',
+               'cloudConsentGranted', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'displayName', 'email', 'photoUrl', 'accountTier',
+               'cloudConsentGranted', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+             data.email is string && data.email.size() <= 254 &&
+             (!('photoUrl' in data) || data.photoUrl == null || (data.photoUrl is string && data.photoUrl.size() <= 1024)) &&
+             data.accountTier is string && data.accountTier in ['standard', 'pro'] &&
+             data.cloudConsentGranted is bool &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    // 2. VideoPreset validation (/users/{userId}/presets/{presetId})
+    function isValidVideoPreset(data, userId) {
+      return data.keys().hasAll([
+               'userId', 'name', 'category', 'resolution', 'fps', 'codec',
+               'bitrateMode', 'bitrateKbps', 'containerFormat', 'crf', 'encoderPreset',
+               'brightness', 'contrast', 'saturation', 'temperature', 'sharpness', 'denoise',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'name', 'category', 'resolution', 'fps', 'codec',
+               'bitrateMode', 'bitrateKbps', 'containerFormat', 'crf', 'encoderPreset',
+               'brightness', 'contrast', 'saturation', 'temperature', 'sharpness', 'denoise',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             data.category is string && data.category in ['enhance', 'compress', 'hq_encoder', 'social', 'custom'] &&
+             data.resolution is string && data.resolution in ['Original', '720p', '1080p', '2K', '4K'] &&
+             data.fps is int && data.fps in [24, 30, 60] &&
+             data.codec is string && data.codec in ['H.264', 'H.265', 'AV1'] &&
+             data.bitrateMode is string && data.bitrateMode in ['Auto', 'Custom'] &&
+             data.bitrateKbps is int && data.bitrateKbps >= 100 && data.bitrateKbps <= 200000 &&
+             data.containerFormat is string && data.containerFormat in ['MP4', 'MOV', 'MKV'] &&
+             data.crf is int && data.crf >= 0 && data.crf <= 51 &&
+             data.encoderPreset is string && data.encoderPreset.size() >= 1 && data.encoderPreset.size() <= 32 &&
+             data.brightness is int && data.brightness >= -100 && data.brightness <= 100 &&
+             data.contrast is int && data.contrast >= -100 && data.contrast <= 100 &&
+             data.saturation is int && data.saturation >= -100 && data.saturation <= 100 &&
+             data.temperature is int && data.temperature >= -100 && data.temperature <= 100 &&
+             data.sharpness is int && data.sharpness >= 0 && data.sharpness <= 100 &&
+             data.denoise is int && data.denoise >= 0 && data.denoise <= 100 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    // 3. ProcessingJob validation (/users/{userId}/jobs/{jobId})
+    function isValidProcessingJob(data, userId) {
+      return data.keys().hasAll([
+               'userId', 'sourceFileName', 'sourceUri', 'sourceSizeBytes',
+               'operationType', 'executionRoute', 'configSummary', 'status',
+               'progressPercent', 'outputSizeBytes', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'sourceFileName', 'sourceUri', 'sourceSizeBytes',
+               'operationType', 'executionRoute', 'configSummary', 'status',
+               'progressPercent', 'errorCode', 'errorMessage', 'outputFilePath',
+               'outputSizeBytes', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
+             data.sourceFileName is string && data.sourceFileName.size() >= 1 && data.sourceFileName.size() <= 255 &&
+             data.sourceUri is string && data.sourceUri.size() >= 1 && data.sourceUri.size() <= 2048 &&
+             data.sourceSizeBytes is int && data.sourceSizeBytes >= 0 &&
+             data.operationType is string && data.operationType in ['enhance', 'compress', 'hq_encode', 'custom_export', 'convert'] &&
+             data.executionRoute is string && data.executionRoute in ['local', 'cloud'] &&
+             data.configSummary is string && data.configSummary.size() >= 1 && data.configSummary.size() <= 500 &&
+             data.status is string && data.status in ['waiting', 'uploading', 'queued', 'processing', 'downloading', 'completed', 'failed', 'cancelled'] &&
+             data.progressPercent is int && data.progressPercent >= 0 && data.progressPercent <= 100 &&
+             (!('errorCode' in data) || data.errorCode == null || (data.errorCode is string && data.errorCode.size() <= 64)) &&
+             (!('errorMessage' in data) || data.errorMessage == null || (data.errorMessage is string && data.errorMessage.size() <= 500)) &&
+             (!('outputFilePath' in data) || data.outputFilePath == null || (data.outputFilePath is string && data.outputFilePath.size() <= 2048)) &&
+             data.outputSizeBytes is int && data.outputSizeBytes >= 0 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    // 4. ExportRecord validation (/users/{userId}/exports/{exportId})
+    function isValidExportRecord(data, userId) {
+      return data.keys().hasAll([
+               'userId', 'jobId', 'fileName', 'originalSizeBytes', 'outputSizeBytes',
+               'savedPercent', 'resolution', 'fps', 'codec', 'containerFormat',
+               'durationMs', 'localUri', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'jobId', 'fileName', 'originalSizeBytes', 'outputSizeBytes',
+               'savedPercent', 'resolution', 'fps', 'codec', 'containerFormat',
+               'durationMs', 'localUri', 'cloudObjectRef', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
+             data.jobId is string && data.jobId.size() >= 1 && data.jobId.size() <= 128 &&
+             data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 255 &&
+             data.originalSizeBytes is int && data.originalSizeBytes >= 0 &&
+             data.outputSizeBytes is int && data.outputSizeBytes >= 0 &&
+             data.savedPercent is int && data.savedPercent >= -1000 && data.savedPercent <= 100 &&
+             data.resolution is string && data.resolution.size() >= 1 && data.resolution.size() <= 32 &&
+             data.fps is int && data.fps >= 1 && data.fps <= 240 &&
+             data.codec is string && data.codec.size() >= 1 && data.codec.size() <= 32 &&
+             data.containerFormat is string && data.containerFormat in ['MP4', 'MOV', 'MKV'] &&
+             data.durationMs is int && data.durationMs >= 0 &&
+             data.localUri is string && data.localUri.size() >= 1 && data.localUri.size() <= 2048 &&
+             (!('cloudObjectRef' in data) || data.cloudObjectRef == null || (data.cloudObjectRef is string && data.cloudObjectRef.size() <= 1024)) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    // 5. UserPreferences validation (/users/{userId}/settings/{settingId})
+    function isValidUserPreferences(data, userId) {
+      return data.keys().hasAll([
+               'userId', 'themePalette', 'themeMode', 'defaultRouting',
+               'cloudConsentAskEveryTime', 'preserveMetadata', 'notificationsEnabled',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'themePalette', 'themeMode', 'defaultRouting',
+               'cloudConsentAskEveryTime', 'preserveMetadata', 'notificationsEnabled',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
+             data.themePalette is string && data.themePalette in ['WarmIvory', 'SoftMint', 'Cream', 'Lavender', 'Sky', 'Peach', 'Sand', 'Graphite', 'Midnight'] &&
+             data.themeMode is string && data.themeMode in ['Light', 'Dark', 'System'] &&
+             data.defaultRouting is string && data.defaultRouting in ['Auto', 'Local', 'Cloud'] &&
+             data.cloudConsentAskEveryTime is bool &&
+             data.preserveMetadata is bool &&
+             data.notificationsEnabled is bool &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming(), userId);
+      allow update: if isOwner(userId) && isValidId(userId) &&
+                       isValidUserProfile(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'displayName', 'email', 'photoUrl', 'accountTier', 'cloudConsentGranted', 'updatedAt'
+                       ]);
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      match /presets/{presetId} {
+        allow get: if isOwner(userId) && isValidId(presetId);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId) && isValidId(presetId) && isValidVideoPreset(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(presetId) &&
+                         isValidVideoPreset(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'name', 'category', 'resolution', 'fps', 'codec',
+                           'bitrateMode', 'bitrateKbps', 'containerFormat', 'crf', 'encoderPreset',
+                           'brightness', 'contrast', 'saturation', 'temperature', 'sharpness', 'denoise',
+                           'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(presetId);
+      }
+
+      match /jobs/{jobId} {
+        allow get: if isOwner(userId) && isValidId(jobId);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId) && isValidId(jobId) && isValidProcessingJob(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(jobId) &&
+                         isValidProcessingJob(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         (
+                           // Active job progress / state transition
+                           (!(existing().status in ['completed', 'failed', 'cancelled']) &&
+                            incoming().diff(existing()).affectedKeys().hasOnly([
+                              'status', 'progressPercent', 'errorCode', 'errorMessage',
+                              'outputFilePath', 'outputSizeBytes', 'updatedAt'
+                            ])) ||
+                           // Retry action from failed/cancelled state
+                           (existing().status in ['failed', 'cancelled'] &&
+                            incoming().status in ['waiting', 'queued', 'processing'] &&
+                            incoming().diff(existing()).affectedKeys().hasOnly([
+                              'status', 'progressPercent', 'errorCode', 'errorMessage', 'updatedAt'
+                            ]))
+                         );
+        allow delete: if isOwner(userId) && isValidId(jobId);
+      }
+
+      match /exports/{exportId} {
+        allow get: if isOwner(userId) && isValidId(exportId);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId) && isValidId(exportId) && isValidExportRecord(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(exportId) &&
+                         isValidExportRecord(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'fileName', 'localUri', 'cloudObjectRef', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(exportId);
+      }
+
+      match /settings/{settingId} {
+        allow get: if isOwner(userId) && isValidId(settingId);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId) && isValidId(settingId) && isValidUserPreferences(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(settingId) &&
+                         isValidUserPreferences(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'themePalette', 'themeMode', 'defaultRouting',
+                           'cloudConsentAskEveryTime', 'preserveMetadata', 'notificationsEnabled',
+                           'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(settingId);
+      }
+    }
+  }
+}

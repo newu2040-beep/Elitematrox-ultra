@@ -1,0 +1,410 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile and account metadata stored at /users/{userId}.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Creator display name."
+        },
+        "email": {
+          "type": "string",
+          "description": "Authenticated user email address."
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Optional avatar URL."
+        },
+        "accountTier": {
+          "type": "string",
+          "enum": ["standard", "pro"],
+          "description": "Account capability tier."
+        },
+        "cloudConsentGranted": {
+          "type": "boolean",
+          "description": "Whether the user has consented to cloud video processing."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when profile was created (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when profile was last updated (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": ["userId", "displayName", "email", "accountTier", "cloudConsentGranted", "createdAt", "updatedAt"]
+    },
+    "VideoPreset": {
+      "title": "VideoPreset",
+      "description": "User-owned validated video processing preset.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "name": {
+          "type": "string",
+          "description": "Preset display name."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["enhance", "compress", "hq_encoder", "social", "custom"],
+          "description": "Workflow category."
+        },
+        "resolution": {
+          "type": "string",
+          "enum": ["Original", "720p", "1080p", "2K", "4K"],
+          "description": "Target output resolution."
+        },
+        "fps": {
+          "type": "integer",
+          "description": "Target frame rate (24, 30, 60)."
+        },
+        "codec": {
+          "type": "string",
+          "enum": ["H.264", "H.265", "AV1"],
+          "description": "Video codec."
+        },
+        "bitrateMode": {
+          "type": "string",
+          "enum": ["Auto", "Custom"],
+          "description": "Bitrate control mode."
+        },
+        "bitrateKbps": {
+          "type": "integer",
+          "description": "Target video bitrate in kbps."
+        },
+        "containerFormat": {
+          "type": "string",
+          "enum": ["MP4", "MOV", "MKV"],
+          "description": "Output container format."
+        },
+        "crf": {
+          "type": "integer",
+          "description": "Constant Rate Factor (0-51)."
+        },
+        "encoderPreset": {
+          "type": "string",
+          "description": "Encoder speed/quality preset."
+        },
+        "brightness": {
+          "type": "integer",
+          "description": "Brightness adjustment (-100 to 100)."
+        },
+        "contrast": {
+          "type": "integer",
+          "description": "Contrast adjustment (-100 to 100)."
+        },
+        "saturation": {
+          "type": "integer",
+          "description": "Saturation adjustment (-100 to 100)."
+        },
+        "temperature": {
+          "type": "integer",
+          "description": "Color temperature adjustment (-100 to 100)."
+        },
+        "sharpness": {
+          "type": "integer",
+          "description": "Sharpening level (0 to 100)."
+        },
+        "denoise": {
+          "type": "integer",
+          "description": "Denoising level (0 to 100)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "name",
+        "category",
+        "resolution",
+        "fps",
+        "codec",
+        "bitrateMode",
+        "bitrateKbps",
+        "containerFormat",
+        "crf",
+        "encoderPreset",
+        "brightness",
+        "contrast",
+        "saturation",
+        "temperature",
+        "sharpness",
+        "denoise",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ProcessingJob": {
+      "title": "ProcessingJob",
+      "description": "Video processing job record tracking operation, configuration, status, progress, and timestamps.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "sourceFileName": {
+          "type": "string",
+          "description": "Original input file name."
+        },
+        "sourceUri": {
+          "type": "string",
+          "description": "Source URI or reference."
+        },
+        "sourceSizeBytes": {
+          "type": "integer",
+          "description": "Original file size in bytes."
+        },
+        "operationType": {
+          "type": "string",
+          "enum": ["enhance", "compress", "hq_encode", "custom_export", "convert"],
+          "description": "Processing workflow type."
+        },
+        "executionRoute": {
+          "type": "string",
+          "enum": ["local", "cloud"],
+          "description": "Where the job is executed."
+        },
+        "configSummary": {
+          "type": "string",
+          "description": "Human-readable summary of filter/codec configuration."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["waiting", "uploading", "queued", "processing", "downloading", "completed", "failed", "cancelled"],
+          "description": "Current job lifecycle status."
+        },
+        "progressPercent": {
+          "type": "integer",
+          "description": "Measured progress percentage (0-100)."
+        },
+        "errorCode": {
+          "type": "string",
+          "description": "Optional diagnostic error code."
+        },
+        "errorMessage": {
+          "type": "string",
+          "description": "Optional readable error message."
+        },
+        "outputFilePath": {
+          "type": "string",
+          "description": "Optional validated output file path."
+        },
+        "outputSizeBytes": {
+          "type": "integer",
+          "description": "Actual output file size in bytes."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "sourceFileName",
+        "sourceUri",
+        "sourceSizeBytes",
+        "operationType",
+        "executionRoute",
+        "configSummary",
+        "status",
+        "progressPercent",
+        "outputSizeBytes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ExportRecord": {
+      "title": "ExportRecord",
+      "description": "Validated video export metadata and object reference.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "jobId": {
+          "type": "string",
+          "description": "Associated processing job ID."
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Output video filename."
+        },
+        "originalSizeBytes": {
+          "type": "integer",
+          "description": "Original input size in bytes."
+        },
+        "outputSizeBytes": {
+          "type": "integer",
+          "description": "Actual output size in bytes."
+        },
+        "savedPercent": {
+          "type": "integer",
+          "description": "Percentage saved (positive for reduction, negative for size increase)."
+        },
+        "resolution": {
+          "type": "string",
+          "description": "Output resolution label (e.g., 1080p, 1920x1080)."
+        },
+        "fps": {
+          "type": "integer",
+          "description": "Output frame rate."
+        },
+        "codec": {
+          "type": "string",
+          "description": "Output video codec."
+        },
+        "containerFormat": {
+          "type": "string",
+          "description": "Output container format (MP4, MOV, MKV)."
+        },
+        "durationMs": {
+          "type": "integer",
+          "description": "Video duration in milliseconds."
+        },
+        "localUri": {
+          "type": "string",
+          "description": "Local file or MediaStore URI."
+        },
+        "cloudObjectRef": {
+          "type": "string",
+          "description": "Optional Cloud Storage object reference."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "jobId",
+        "fileName",
+        "originalSizeBytes",
+        "outputSizeBytes",
+        "savedPercent",
+        "resolution",
+        "fps",
+        "codec",
+        "containerFormat",
+        "durationMs",
+        "localUri",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserPreferences": {
+      "title": "UserPreferences",
+      "description": "User theme, appearance, and processing preferences stored at /users/{userId}/settings/{settingId}.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "themePalette": {
+          "type": "string",
+          "enum": ["WarmIvory", "SoftMint", "Cream", "Lavender", "Sky", "Peach", "Sand", "Graphite", "Midnight"],
+          "description": "Selected neumorphic color palette."
+        },
+        "themeMode": {
+          "type": "string",
+          "enum": ["Light", "Dark", "System"],
+          "description": "Selected theme mode."
+        },
+        "defaultRouting": {
+          "type": "string",
+          "enum": ["Auto", "Local", "Cloud"],
+          "description": "Preferred local/cloud processing route."
+        },
+        "cloudConsentAskEveryTime": {
+          "type": "boolean",
+          "description": "Whether to ask consent before every cloud upload."
+        },
+        "preserveMetadata": {
+          "type": "boolean",
+          "description": "Whether to preserve source metadata on export."
+        },
+        "notificationsEnabled": {
+          "type": "boolean",
+          "description": "Whether completion notifications are enabled."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "themePalette",
+        "themeMode",
+        "defaultRouting",
+        "cloudConsentAskEveryTime",
+        "preserveMetadata",
+        "notificationsEnabled",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Profile and account metadata for each authenticated user."
+    },
+    "/users/{userId}/presets/{presetId}": {
+      "schema": { "$ref": "#/entities/VideoPreset" },
+      "description": "User-owned validated video processing presets."
+    },
+    "/users/{userId}/jobs/{jobId}": {
+      "schema": { "$ref": "#/entities/ProcessingJob" },
+      "description": "Video processing jobs and real-time progress records."
+    },
+    "/users/{userId}/exports/{exportId}": {
+      "schema": { "$ref": "#/entities/ExportRecord" },
+      "description": "Completed and validated video export records."
+    },
+    "/users/{userId}/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/UserPreferences" },
+      "description": "Theme, appearance, and user processing preferences."
+    }
+  }
+}

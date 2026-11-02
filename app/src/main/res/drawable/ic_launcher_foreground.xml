@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer soft mint circle -->
+    <path
+        android:fillColor="#FFD4EFE2"
+        android:pathData="M54,24A30,30 0 1,1 54,84A30,30 0 1,1 54,24Z" />
+    <!-- Bold Elite Matrix hollow play prism -->
+    <path
+        android:fillColor="#FF174D38"
+        android:fillType="evenOdd"
+        android:pathData="M42,35 C42,32.5 44.7,31 46.8,32.3 L72.5,48.3 C74.5,49.5 74.5,52.5 72.5,53.7 L46.8,69.7 C44.7,71 42,69.5 42,67 Z M48,41.5 L48,60.5 L63.5,51 Z" />
+</vector>
