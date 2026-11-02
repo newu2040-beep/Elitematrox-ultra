@@ -14,6 +14,7 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import com.example.domain.model.AppFontFamily
 import com.example.domain.model.ExecutionRoute
 import com.example.domain.model.ExportItem
 import com.example.domain.model.JobItem
@@ -28,6 +29,7 @@ private val Context.eliteMatrixDataStore by preferencesDataStore(name = "elite_m
 data class AppPreferencesState(
     val themePalette: ThemePalette = ThemePalette.WarmIvory,
     val themeMode: ThemeMode = ThemeMode.Light,
+    val fontFamily: AppFontFamily = AppFontFamily.PlusJakarta,
     val defaultRoute: ExecutionRoute = ExecutionRoute.Auto,
     val cloudConsentGranted: Boolean = false,
     val askConsentEveryTime: Boolean = true,
@@ -41,6 +43,7 @@ class PreferencesDataSource(private val context: Context) {
     private object Keys {
         val THEME_PALETTE = stringPreferencesKey("theme_palette")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val FONT_FAMILY = stringPreferencesKey("font_family")
         val DEFAULT_ROUTE = stringPreferencesKey("default_route")
         val CLOUD_CONSENT = booleanPreferencesKey("cloud_consent_granted")
         val ASK_CONSENT_EVERY_TIME = booleanPreferencesKey("ask_consent_every_time")
@@ -57,6 +60,9 @@ class PreferencesDataSource(private val context: Context) {
         val mode = prefs[Keys.THEME_MODE]?.let {
             runCatching { ThemeMode.valueOf(it) }.getOrNull()
         } ?: ThemeMode.Light
+        val font = prefs[Keys.FONT_FAMILY]?.let {
+            runCatching { AppFontFamily.valueOf(it) }.getOrNull()
+        } ?: AppFontFamily.PlusJakarta
         val route = prefs[Keys.DEFAULT_ROUTE]?.let {
             runCatching { ExecutionRoute.valueOf(it) }.getOrNull()
         } ?: ExecutionRoute.Auto
@@ -64,6 +70,7 @@ class PreferencesDataSource(private val context: Context) {
         AppPreferencesState(
             themePalette = palette,
             themeMode = mode,
+            fontFamily = font,
             defaultRoute = route,
             cloudConsentGranted = prefs[Keys.CLOUD_CONSENT] ?: false,
             askConsentEveryTime = prefs[Keys.ASK_CONSENT_EVERY_TIME] ?: true,
@@ -81,6 +88,10 @@ class PreferencesDataSource(private val context: Context) {
 
     suspend fun updateThemeMode(mode: ThemeMode) {
         context.eliteMatrixDataStore.edit { it[Keys.THEME_MODE] = mode.name }
+    }
+
+    suspend fun updateFontFamily(fontFamily: AppFontFamily) {
+        context.eliteMatrixDataStore.edit { it[Keys.FONT_FAMILY] = fontFamily.name }
     }
 
     suspend fun updateDefaultRoute(route: ExecutionRoute) {

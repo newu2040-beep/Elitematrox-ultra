@@ -6,7 +6,7 @@ on:
       - main
       - master
     paths:
-      - 'apk-distribution/app-debug.apk'
+      - 'apk-distribution/**'
   workflow_dispatch:
 
 permissions:
@@ -30,22 +30,36 @@ jobs:
           APK_FILE="apk-distribution/app-debug.apk"
           SHA_FILE="apk-distribution/app-debug.apk.sha256"
 
-          if [ ! -f "$APK_FILE" ]; then
-            echo "Error: $APK_FILE does not exist." >&2
-            exit 1
-          fi
-
-          if [ ! -s "$APK_FILE" ]; then
-            echo "Error: $APK_FILE is empty." >&2
-            exit 1
-          fi
-
           if [ ! -f "$SHA_FILE" ]; then
             echo "Error: $SHA_FILE does not exist." >&2
             exit 1
           fi
 
           EXPECTED_SHA=$(awk '{print $1}' "$SHA_FILE")
+
+          # Check if raw binary APK was corrupted by UTF-8 text encoding during browser GitHub sync.
+          # If so, restore the exact byte-for-byte binary from the pure-ASCII Base64 chunks.
+          NEED_RESTORE=0
+          if [ ! -f "$APK_FILE" ] || [ ! -s "$APK_FILE" ]; then
+            NEED_RESTORE=1
+          else
+            CURRENT_SHA=$(sha256sum "$APK_FILE" | awk '{print $1}')
+            if [ "$CURRENT_SHA" != "$EXPECTED_SHA" ]; then
+              echo "Detected binary UTF-8 sync mangling on $APK_FILE ($CURRENT_SHA != $EXPECTED_SHA). Restoring from ASCII chunks..."
+              NEED_RESTORE=1
+            fi
+          fi
+
+          if [ "$NEED_RESTORE" -eq 1 ]; then
+            if compgen -G "apk-distribution/chunks/apk.b64.part_*" > /dev/null; then
+              mkdir -p apk-distribution
+              cat apk-distribution/chunks/apk.b64.part_* | tr -d '\r' | base64 -d > "$APK_FILE"
+            else
+              echo "Error: $APK_FILE is missing or corrupted and no ASCII chunks found." >&2
+              exit 1
+            fi
+          fi
+
           ACTUAL_SHA=$(sha256sum "$APK_FILE" | awk '{print $1}')
 
           if [ -z "$EXPECTED_SHA" ] || [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
@@ -79,7 +93,7 @@ jobs:
           RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
 
           NOTES=$(cat <<EOF
-          ### Pre-Compiled Android Debug APK
+          ### Pre-Compiled Android Debug APK (v1 + v2 + v3 Signed & Zipaligned)
           - **Asset**: \`app-debug.apk\`
           - **Size**: ${SIZE_HUMAN} (${SIZE_BYTES} bytes)
           - **SHA-256**: \`${SHA256}\`

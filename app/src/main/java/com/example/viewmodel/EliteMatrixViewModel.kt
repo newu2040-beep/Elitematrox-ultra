@@ -25,8 +25,10 @@ import com.example.data.remote.FirestoreExportRecord
 import com.example.data.remote.FirestoreProcessingJob
 import com.example.data.remote.FirestoreUserPreferences
 import com.example.data.remote.FirestoreVideoPreset
+import com.example.domain.model.AppFontFamily
 import com.example.domain.model.BuiltInPresets
-import com.example.domain.model.CompressionMode
+import com.example.domain.model.CinematicColorProfile
+import com.example.domain.model.DeviceHardwareCapabilities
 import com.example.domain.model.EnhancementAdjustments
 import com.example.domain.model.ExecutionRoute
 import com.example.domain.model.ExportConfiguration
@@ -79,6 +81,7 @@ data class EditorUiState(
     val videoThumbnail: Bitmap? = null,
     val adjustments: EnhancementAdjustments = EnhancementAdjustments(),
     val exportConfig: ExportConfiguration = ExportConfiguration(),
+    val deviceCapabilities: DeviceHardwareCapabilities = DeviceHardwareCapabilities(),
     val isProcessing: Boolean = false,
     val processingStatus: String = "Idle",
     val processingProgress: Int = 0,
@@ -93,10 +96,15 @@ class EliteMatrixViewModel(
     private val preferencesDataSource: PreferencesDataSource,
     private val localDao: EliteMatrixDao,
     private val firestoreRepository: EliteMatrixFirestoreRepository,
-    private val authenticatedUserId: String?
+    private val authenticatedUserId: String?,
+    initialDeviceCapabilities: DeviceHardwareCapabilities = DeviceHardwareCapabilities()
 ) : ViewModel() {
 
-    private val _editorState = MutableStateFlow(EditorUiState())
+    private val _editorState = MutableStateFlow(
+        EditorUiState(
+            deviceCapabilities = initialDeviceCapabilities
+        )
+    )
     val editorState: StateFlow<EditorUiState> = _editorState.asStateFlow()
 
     private var activeProcessingJob: Job? = null
@@ -256,6 +264,105 @@ class EliteMatrixViewModel(
         }
     }
 
+    fun refreshDeviceCapabilities(context: Context) {
+        val caps = VideoProcessingEngine.detectDeviceCapabilities(context)
+        _editorState.update { it.copy(deviceCapabilities = caps) }
+    }
+
+    fun applyRecommendedHardwareSettings() {
+        val caps = _editorState.value.deviceCapabilities
+        val targetFps = when {
+            caps.displayRefreshRateHz >= 120 -> 120
+            caps.displayRefreshRateHz >= 90 -> 90
+            else -> 60
+        }
+        _editorState.update { state ->
+            state.copy(
+                exportConfig = state.exportConfig.copy(
+                    resolution = caps.recommendedResolution,
+                    fps = targetFps,
+                    codec = if ("H.265" in caps.supportedCodecs && targetFps >= 90) "H.265" else "H.264",
+                    bitrateMode = "Auto"
+                ),
+                statusMessage = "Matched ${caps.displayRefreshRateHz}Hz display: ${caps.recommendedResolution} • $targetFps FPS"
+            )
+        }
+    }
+
+    fun applyCinematicProfile(profile: CinematicColorProfile) {
+        _editorState.update { state ->
+            val current = state.adjustments
+            val updated = when (profile) {
+                CinematicColorProfile.Neutral -> current.copy(cinematicProfile = profile)
+                CinematicColorProfile.TealAndOrange -> current.copy(
+                    cinematicProfile = profile,
+                    contrast = 18,
+                    saturation = 12,
+                    temperature = 14,
+                    vibrance = 16,
+                    highlights = -10,
+                    shadows = 12
+                )
+                CinematicColorProfile.HdrVivid -> current.copy(
+                    cinematicProfile = profile,
+                    brightness = 8,
+                    contrast = 22,
+                    saturation = 24,
+                    vibrance = 28,
+                    sharpness = 35,
+                    highlights = 14
+                )
+                CinematicColorProfile.GoldenHour -> current.copy(
+                    cinematicProfile = profile,
+                    brightness = 10,
+                    contrast = 12,
+                    saturation = 16,
+                    temperature = 32,
+                    tint = 8,
+                    exposure = 8
+                )
+                CinematicColorProfile.CrispDaylight -> current.copy(
+                    cinematicProfile = profile,
+                    brightness = 12,
+                    contrast = 15,
+                    saturation = 10,
+                    temperature = -14,
+                    sharpness = 28,
+                    exposure = 6
+                )
+                CinematicColorProfile.MoodyMatte -> current.copy(
+                    cinematicProfile = profile,
+                    brightness = -6,
+                    contrast = 20,
+                    saturation = -22,
+                    shadows = 18,
+                    highlights = -18,
+                    temperature = -8
+                )
+                CinematicColorProfile.CyberpunkNeon -> current.copy(
+                    cinematicProfile = profile,
+                    contrast = 24,
+                    saturation = 30,
+                    vibrance = 34,
+                    tint = 22,
+                    temperature = -16,
+                    highlights = 16
+                )
+                CinematicColorProfile.MonochromeBw -> current.copy(
+                    cinematicProfile = profile,
+                    contrast = 26,
+                    saturation = -100,
+                    vibrance = -100,
+                    sharpness = 24
+                )
+            }
+            state.copy(
+                adjustments = updated,
+                statusMessage = "Applied ${profile.label} color profile"
+            )
+        }
+    }
+
     fun navigateTo(screen: PrimaryScreen) {
         _editorState.update { it.copy(activeScreen = screen, statusMessage = null) }
     }
@@ -290,7 +397,7 @@ class EliteMatrixViewModel(
                         selectedVideo = meta,
                         videoThumbnail = thumb,
                         activeScreen = targetScreenAfterImport ?: state.activeScreen,
-                        statusMessage = "Loaded ${meta.fileName} (${meta.resolutionLabel} • ${formatBytes(meta.sizeBytes)})"
+                        statusMessage = "Loaded ${meta.fileName} (${meta.exactDimensionsLabel} • ${meta.formattedFpsLabel} • ${formatBytes(meta.sizeBytes)})"
                     )
                 }
             }.onFailure { err ->
@@ -313,7 +420,7 @@ class EliteMatrixViewModel(
                         selectedVideo = meta,
                         videoThumbnail = thumb,
                         activeScreen = targetScreen ?: state.activeScreen,
-                        statusMessage = "Loaded Nature_Video.mp4 (${meta?.resolutionLabel ?: "720p"})"
+                        statusMessage = "Loaded Nature_Video.mp4 (${meta?.resolutionLabel ?: "720p"} • ${meta?.formattedFpsLabel ?: "30 FPS"})"
                     )
                 }
             }.onFailure { err ->
@@ -346,9 +453,11 @@ class EliteMatrixViewModel(
                     codec = preset.codec,
                     bitrateMode = "Custom",
                     customBitrateKbps = preset.bitrateKbps,
-                    containerFormat = preset.containerFormat
+                    containerFormat = preset.containerFormat,
+                    audioBitrateKbps = preset.audioBitrateKbps,
+                    socialOptimizationEnabled = true
                 ),
-                statusMessage = "Applied ${preset.title} recommended profile (${preset.subtitle})"
+                statusMessage = "Applied ${preset.title} Anti-Recompression Profile (${preset.subtitle})"
             )
         }
     }
@@ -532,9 +641,11 @@ class EliteMatrixViewModel(
             val sourceUri = Uri.parse(validMeta.uriString)
             val adjustments = _editorState.value.adjustments
             val exportConfig = _editorState.value.exportConfig
+            val isCompressionWorkflow = operationType.equals("compress", ignoreCase = true)
+            val targetBitrateKbps = exportConfig.effectiveBitrateKbps(isCompressionWorkflow)
             val jobId = "job_${UUID.randomUUID().toString().replace("-", "").take(12)}"
             val routeLabel = if (useCloudRoute && authenticatedUserId != null) "cloud" else "local"
-            val summary = "${exportConfig.resolution} • ${exportConfig.fps} FPS • ${exportConfig.codec} • ${exportConfig.containerFormat}"
+            val summary = "${exportConfig.resolution} • ${exportConfig.fps} FPS • ${"%.1f".format(targetBitrateKbps / 1000f)} Mbps • ${exportConfig.codec} • ${exportConfig.containerFormat}"
 
             val initialJob = JobItem(
                 id = jobId,
@@ -593,10 +704,11 @@ class EliteMatrixViewModel(
                     sourceMetadata = validMeta,
                     adjustments = adjustments,
                     exportConfig = exportConfig,
+                    isCompressionWorkflow = isCompressionWorkflow,
                     onProgress = { pct ->
                         _editorState.update {
                             it.copy(
-                                processingStatus = "Encoding ${exportConfig.codec} (${pct}%)",
+                                processingStatus = "Encoding ${exportConfig.resolution} • ${exportConfig.fps} FPS (${pct}%)",
                                 processingProgress = pct
                             )
                         }
@@ -719,7 +831,7 @@ class EliteMatrixViewModel(
         }
     }
 
-    // Theme & Preferences Updates
+    // Theme, Font & Preferences Updates
     fun setThemePalette(palette: ThemePalette) {
         viewModelScope.launch {
             preferencesDataSource.updateThemePalette(palette)
@@ -731,6 +843,12 @@ class EliteMatrixViewModel(
         viewModelScope.launch {
             preferencesDataSource.updateThemeMode(mode)
             syncPreferencesToFirestore()
+        }
+    }
+
+    fun setFontFamily(fontFamily: AppFontFamily) {
+        viewModelScope.launch {
+            preferencesDataSource.updateFontFamily(fontFamily)
         }
     }
 
@@ -797,11 +915,13 @@ class EliteMatrixViewModel(
                 val databaseId = appContext.getString(R.string.firestore_database_id)
                 val firestore = FirebaseFirestore.getInstance(databaseId)
                 val firestoreRepo = EliteMatrixFirestoreRepository(firestore, Firebase.auth)
+                val detectedCaps = VideoProcessingEngine.detectDeviceCapabilities(appContext)
                 EliteMatrixViewModel(
                     preferencesDataSource = prefs,
                     localDao = db.dao(),
                     firestoreRepository = firestoreRepo,
-                    authenticatedUserId = authenticatedUserId
+                    authenticatedUserId = authenticatedUserId,
+                    initialDeviceCapabilities = detectedCaps
                 )
             }
         }

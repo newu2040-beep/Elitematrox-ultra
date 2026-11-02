@@ -7,6 +7,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import com.example.domain.model.AppFontFamily
 import com.example.domain.model.ThemeMode
 import com.example.domain.model.ThemePalette
 
@@ -14,6 +15,7 @@ import com.example.domain.model.ThemePalette
 fun EliteMatrixTheme(
     themePalette: ThemePalette = ThemePalette.WarmIvory,
     themeMode: ThemeMode = ThemeMode.Light,
+    fontFamily: AppFontFamily = AppFontFamily.PlusJakarta,
     content: @Composable () -> Unit
 ) {
     val systemDark = isSystemInDarkTheme()
@@ -24,6 +26,7 @@ fun EliteMatrixTheme(
     }
 
     val neuColors = paletteFor(themePalette, useDark)
+    val activeTypography = typographyFor(fontFamily)
 
     val colorScheme = if (neuColors.isDark) {
         darkColorScheme(
@@ -54,7 +57,7 @@ fun EliteMatrixTheme(
     CompositionLocalProvider(LocalNeumorphicColors provides neuColors) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = Typography,
+            typography = activeTypography,
             content = content
         )
     }

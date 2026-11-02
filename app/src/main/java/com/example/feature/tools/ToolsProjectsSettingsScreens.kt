@@ -38,6 +38,7 @@ import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.VideoFile
 import androidx.compose.material.icons.outlined.ViewInAr
@@ -65,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.AppPreferencesState
+import com.example.domain.model.AppFontFamily
 import com.example.domain.model.BuiltInPresets
 import com.example.domain.model.CompressionMode
 import com.example.domain.model.ExecutionRoute
@@ -141,7 +143,7 @@ fun ToolsHubScreen(
                     ActiveToolModal.PresetManager -> "Presets & HQ Profiles"
                     ActiveToolModal.FormatConverter -> "Format & Codec Converter"
                     ActiveToolModal.BitrateCalculator -> "Bitrate & Size Calculator"
-                    ActiveToolModal.CompressWorkflow -> "Compress Video"
+                    ActiveToolModal.CompressWorkflow -> "HQ Video Compression"
                     ActiveToolModal.HqEncoderWorkflow -> "HQ Encoder"
                     ActiveToolModal.None -> "Pro Video Tools"
                 },
@@ -158,19 +160,19 @@ fun ToolsHubScreen(
         when (activeModal) {
             ActiveToolModal.None -> {
                 val tools = listOf(
-                    Triple("Enhance Video", "Color, tone, sharpening, denoise & live filter graph", Icons.Outlined.AutoFixHigh) to {
+                    Triple("Enhance Video", "Color profiles, tone, sharpening, denoise & live filter graph", Icons.Outlined.AutoFixHigh) to {
                         onNavigateScreen(PrimaryScreen.EnhanceVideo)
                     },
-                    Triple("Compress Video", "Smart, Balanced, High Quality & target file size control", Icons.Outlined.Layers) to {
+                    Triple("Compress Video", "Custom FPS, resolution, bitrate & Smart HQ compression", Icons.Outlined.Layers) to {
                         onOpenModal(ActiveToolModal.CompressWorkflow)
                     },
-                    Triple("HQ Encoder", "Editable HQ presets for TikTok, Reels, Shorts & Archive", Icons.Outlined.ViewInAr) to {
+                    Triple("HQ Encoder", "Editable HQ presets for TikTok, Reels, Shorts, 120FPS & Archive", Icons.Outlined.ViewInAr) to {
                         onOpenModal(ActiveToolModal.HqEncoderWorkflow)
                     },
-                    Triple("Custom Export", "Manual resolution, FPS, codec, CRF & container settings", Icons.Outlined.Tune) to {
+                    Triple("Custom Export", "Manual resolution, 24–120 FPS CFR, codec, audio & anti-recompression", Icons.Outlined.Tune) to {
                         onNavigateScreen(PrimaryScreen.ExportSettings)
                     },
-                    Triple("Video Inspector", "Inspect codecs, FPS, bitrate, pixel format & streams", Icons.Outlined.Info) to {
+                    Triple("Video Inspector", "Inspect verified sample FPS, bitrate, resolution, audio & HDR tags", Icons.Outlined.Info) to {
                         onOpenModal(ActiveToolModal.VideoInspector)
                     },
                     Triple("Preset Manager", "Create, apply, duplicate & sync custom presets", Icons.Outlined.BookmarkBorder) to {
@@ -262,12 +264,13 @@ fun ToolsHubScreen(
                                 "Container Format" to selectedVideo.containerFormat,
                                 "File Size" to EliteMatrixViewModel.formatBytes(selectedVideo.sizeBytes),
                                 "Duration" to "${"%.2f".format(selectedVideo.durationMs / 1000.0)} sec",
-                                "Dimensions" to "${selectedVideo.width} × ${selectedVideo.height} (${selectedVideo.resolutionLabel})",
+                                "Display Dimensions" to "${selectedVideo.exactDimensionsLabel} (${selectedVideo.resolutionLabel})",
                                 "Aspect Ratio" to selectedVideo.aspectRatioLabel,
-                                "Frame Rate" to "${"%.1f".format(selectedVideo.fps)} FPS",
-                                "Bitrate" to "${selectedVideo.bitrateKbps} kbps",
+                                "Verified Frame Rate" to selectedVideo.formattedFpsLabel,
+                                "Video Bitrate" to "${selectedVideo.bitrateKbps} kbps (${"%.1f".format(selectedVideo.bitrateKbps / 1000f)} Mbps)",
                                 "Video Codec" to selectedVideo.videoCodec,
                                 "Audio Codec" to selectedVideo.audioCodec,
+                                "Audio Spec" to "${selectedVideo.audioBitrateKbps} kbps • ${selectedVideo.audioSampleRateHz / 1000.0} kHz • ${selectedVideo.audioChannels}ch",
                                 "Pixel Format" to selectedVideo.pixelFormat,
                                 "Color Space / HDR" to selectedVideo.colorStandard,
                                 "Rotation" to "${selectedVideo.rotationDegrees}°",
@@ -323,7 +326,7 @@ fun ToolsHubScreen(
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                                 )
                                 Text(
-                                    text = "${preset.resolution} • ${preset.fps} FPS • ${preset.codec} • CRF ${preset.crf}",
+                                    text = "${preset.resolution} • ${preset.fps} FPS • ${preset.codec} • ${"%.1f".format(preset.bitrateKbps / 1000f)} Mbps",
                                     color = neu.textSecondary,
                                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
                                 )
@@ -343,6 +346,12 @@ fun ToolsHubScreen(
             }
 
             ActiveToolModal.CompressWorkflow -> {
+                val (targetW, targetH) = exportConfig.targetDimensionsPx(
+                    sourceWidth = selectedVideo?.displayWidth ?: 1920,
+                    sourceHeight = selectedVideo?.displayHeight ?: 1080
+                )
+                val compressBitrateKbps = exportConfig.effectiveBitrateKbps(isCompressionWorkflow = true)
+
                 NeumorphicCard(
                     modifier = Modifier.fillMaxWidth(),
                     cornerRadius = 22.dp,
@@ -350,17 +359,17 @@ fun ToolsHubScreen(
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "Compression Profile",
+                            text = "1. Compression Profile",
                             color = neu.textPrimary,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Spacer(modifier = Modifier.height(10.dp))
                         CompressionMode.entries.forEach { mode ->
-                            val selected = exportConfig.compressionMode == mode
+                            val selected = exportConfig.compressionMode == mode && exportConfig.bitrateMode == "Auto"
                             NeumorphicCard(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(bottom = 10.dp),
+                                    .padding(bottom = 8.dp),
                                 cornerRadius = 16.dp,
                                 contentPadding = PaddingValues(12.dp),
                                 onClick = {
@@ -399,16 +408,149 @@ fun ToolsHubScreen(
                             }
                         }
 
-                        val origSize = selectedVideo?.sizeBytes ?: 25_690_112L
-                        val estOut = (origSize * exportConfig.compressionMode.bitrateFactor).toLong()
+                        Spacer(modifier = Modifier.height(8.dp))
+                        HorizontalDivider(color = neu.divider)
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Custom Resolution in HQ Compression Mode
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "2. Target Resolution",
+                                color = neu.textPrimary,
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "${targetW}×${targetH}",
+                                color = neu.accentPrimary,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf("720p", "1080p", "2K", "4K").forEach { res ->
+                                NeumorphicChoicePill(
+                                    label = res,
+                                    selected = exportConfig.resolution == res,
+                                    onClick = { onUpdateExportConfig { it.copy(resolution = res) } }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Custom Frame Rate (24, 30, 50, 60, 90, 120 FPS) in HQ Compression Mode
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "3. Target Frame Rate (CFR)",
+                                color = neu.textPrimary,
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "${exportConfig.fps} FPS",
+                                color = neu.accentPrimary,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(24, 30, 60).forEach { fpsVal ->
+                                NeumorphicChoicePill(
+                                    label = "$fpsVal FPS",
+                                    selected = exportConfig.fps == fpsVal,
+                                    onClick = { onUpdateExportConfig { it.copy(fps = fpsVal) } }
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(50, 90, 120).forEach { fpsVal ->
+                                NeumorphicChoicePill(
+                                    label = "$fpsVal FPS",
+                                    selected = exportConfig.fps == fpsVal,
+                                    onClick = { onUpdateExportConfig { it.copy(fps = fpsVal) } }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Video Codec & Custom Bitrate in HQ Compression Mode
                         Text(
-                            text = "Estimated Output: ~${EliteMatrixViewModel.formatBytes(estOut)} (exact size depends on scene entropy)",
+                            text = "4. Codec & Bitrate Control",
+                            color = neu.textPrimary,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf("H.264", "H.265", "AV1").forEach { codecName ->
+                                NeumorphicChoicePill(
+                                    label = codecName,
+                                    selected = exportConfig.codec == codecName,
+                                    onClick = { onUpdateExportConfig { it.copy(codec = codecName) } }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Bitrate: ${"%.1f".format(compressBitrateKbps / 1000f)} Mbps (${exportConfig.bitrateMode})",
+                                color = neu.textPrimary,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                            Text(
+                                text = if (exportConfig.bitrateMode == "Custom") "Reset to Auto" else "Custom",
+                                color = neu.accentPrimary,
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                modifier = Modifier.clickable {
+                                    onUpdateExportConfig {
+                                        it.copy(bitrateMode = if (it.bitrateMode == "Custom") "Auto" else "Custom")
+                                    }
+                                }
+                            )
+                        }
+                        Slider(
+                            value = compressBitrateKbps.toFloat().coerceIn(800f, 50000f),
+                            onValueChange = { v ->
+                                onUpdateExportConfig {
+                                    it.copy(bitrateMode = "Custom", customBitrateKbps = v.toInt())
+                                }
+                            },
+                            valueRange = 800f..50000f,
+                            colors = SliderDefaults.colors(activeTrackColor = neu.accentPrimary)
+                        )
+
+                        val durationSec = ((selectedVideo?.durationMs ?: 15_000L) / 1000.0).coerceAtLeast(1.0)
+                        val estOut = ((compressBitrateKbps + exportConfig.audioBitrateKbps) * 1000L / 8.0 * durationSec * 1.02).toLong()
+                        Text(
+                            text = "Estimated Output: ~${EliteMatrixViewModel.formatBytes(estOut)} at ${targetW}×${targetH} • ${exportConfig.fps} FPS",
                             color = neu.textSecondary,
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
                         )
                         Spacer(modifier = Modifier.height(14.dp))
                         EmeraldPillButton(
-                            text = "Start Compression Job",
+                            text = "Start HQ Compression (${exportConfig.resolution} • ${exportConfig.fps} FPS)",
                             onClick = { onStartJob("compress") }
                         )
                     }
@@ -428,7 +570,7 @@ fun ToolsHubScreen(
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "Editable quality-focused encoding configurations (preserves source cadence and BT.709 color accuracy).",
+                            text = "Editable quality-focused encoding configurations (locks exact CFR frame rate and BT.709 color accuracy).",
                             color = neu.textSecondary,
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
                         )
@@ -455,7 +597,7 @@ fun ToolsHubScreen(
                                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                                         )
                                         Text(
-                                            text = "${preset.resolution} • ${preset.fps} FPS • ${preset.codec} • ${preset.bitrateKbps / 1000} Mbps",
+                                            text = "${preset.resolution} • ${preset.fps} FPS • ${preset.codec} • ${"%.1f".format(preset.bitrateKbps / 1000f)} Mbps",
                                             color = neu.textSecondary,
                                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
                                         )
@@ -470,7 +612,7 @@ fun ToolsHubScreen(
                         }
                         Spacer(modifier = Modifier.height(10.dp))
                         EmeraldPillButton(
-                            text = "Run HQ Encode Now",
+                            text = "Run HQ Encode Now (${exportConfig.resolution} • ${exportConfig.fps} FPS)",
                             onClick = { onStartJob("hq_encode") }
                         )
                     }
@@ -558,7 +700,7 @@ fun ToolsHubScreen(
                         )
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "Recommended Video Bitrate: $calculatedVideoKbps kbps (${"%.1f".format(calculatedVideoKbps / 1000f)} Mbps) + 192 kbps AAC Audio",
+                            text = "Recommended Video Bitrate: $calculatedVideoKbps kbps (${"%.1f".format(calculatedVideoKbps / 1000f)} Mbps) + ${exportConfig.audioBitrateKbps} kbps Audio",
                             color = neu.accentPrimary,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
@@ -743,6 +885,7 @@ fun SettingsScreen(
     onOpenFullFilePicker: () -> Unit = {},
     onSelectPalette: (ThemePalette) -> Unit,
     onSelectThemeMode: (ThemeMode) -> Unit,
+    onSelectFontFamily: (AppFontFamily) -> Unit = {},
     onSelectRoute: (ExecutionRoute) -> Unit,
     onTogglePreserveMetadata: (Boolean) -> Unit,
     onToggleNotifications: (Boolean) -> Unit,
@@ -948,7 +1091,56 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(18.dp))
 
-        // 4. Neumorphic Color Palettes (16 Custom Light & Dark Themes)
+        // 4. Typography & Font Styles Selector
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Outlined.TextFields,
+                contentDescription = null,
+                tint = neu.accentPrimary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Typography & Font Style",
+                color = neu.textPrimary,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+            )
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            AppFontFamily.entries.forEach { fontOption ->
+                val isSelected = preferences.fontFamily == fontOption
+                NeumorphicCard(
+                    cornerRadius = 16.dp,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                    onClick = { onSelectFontFamily(fontOption) }
+                ) {
+                    Column {
+                        Text(
+                            text = fontOption.displayName,
+                            color = if (isSelected) neu.accentPrimary else neu.textPrimary,
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                fontSize = 12.5.sp
+                            )
+                        )
+                        Text(
+                            text = fontOption.subtitle,
+                            color = neu.textSecondary,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 10.5.sp)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        // 5. Neumorphic Color Palettes (16 Custom Light & Dark Themes)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = Icons.Outlined.Palette,
@@ -1001,7 +1193,7 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(18.dp))
 
-        // 5. Local / Cloud Routing & Privacy
+        // 6. Local / Cloud Routing & Privacy
         Text(
             text = "Processing Route (Local / Cloud Run)",
             color = neu.textPrimary,
@@ -1067,7 +1259,7 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // 6. Developer Credit Card ("Made with ❤️ by Rahul Shah")
+        // 7. Developer Credit Card ("Made with ❤️ by Rahul Shah")
         NeumorphicCard(
             modifier = Modifier
                 .fillMaxWidth()

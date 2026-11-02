@@ -692,6 +692,37 @@ fun SocialPresetBadgeIcon(presetName: String, modifier: Modifier = Modifier.size
                     }
                     drawPath(play, color = Color.White)
                 }
+                presetName.contains("WhatsApp", ignoreCase = true) -> {
+                    drawCircle(
+                        color = Color(0xFF25D366),
+                        radius = w * 0.44f
+                    )
+                    drawCircle(
+                        color = Color.White,
+                        radius = w * 0.22f,
+                        style = Stroke(width = w * 0.12f)
+                    )
+                }
+                presetName.contains("Twitter", ignoreCase = true) || presetName.startsWith("X ") -> {
+                    drawRoundRect(
+                        color = Color(0xFF111111),
+                        cornerRadius = CornerRadius(w * 0.22f, w * 0.22f)
+                    )
+                    drawLine(
+                        color = Color.White,
+                        start = Offset(w * 0.28f, h * 0.28f),
+                        end = Offset(w * 0.72f, h * 0.72f),
+                        strokeWidth = w * 0.13f,
+                        cap = StrokeCap.Round
+                    )
+                    drawLine(
+                        color = Color.White,
+                        start = Offset(w * 0.72f, h * 0.28f),
+                        end = Offset(w * 0.28f, h * 0.72f),
+                        strokeWidth = w * 0.13f,
+                        cap = StrokeCap.Round
+                    )
+                }
                 else -> {
                     // TikTok cyan + magenta + black musical note
                     val strokeW = w * 0.15f
@@ -846,16 +877,24 @@ fun VideoThumbnailPreview(
     modifier: Modifier = Modifier
 ) {
     val colorMatrix = remember(adjustments) {
-        val b = (adjustments.brightness / 100f) * 55f
-        val c = 1f + (adjustments.contrast / 100f) * 0.65f
-        val s = (1f + (adjustments.saturation / 100f) * 0.85f).coerceAtLeast(0f)
-        val t = (adjustments.temperature / 100f) * 24f
+        val profile = adjustments.cinematicProfile
+        val totalBrightness = adjustments.brightness + (adjustments.exposure * 0.7f) + (adjustments.shadows * 0.35f)
+        val totalContrast = adjustments.contrast + profile.contrastDelta + (adjustments.highlights * 0.3f)
+        val totalSat = adjustments.saturation + profile.saturationDelta + (adjustments.vibrance * 0.55f)
+        val totalTemp = adjustments.temperature + profile.temperatureDelta
+        val totalTint = adjustments.tint + profile.tintDelta
+
+        val b = (totalBrightness / 100f) * 55f
+        val c = (1f + (totalContrast / 100f) * 0.65f).coerceIn(0.25f, 2.5f)
+        val s = (1f + (totalSat / 100f) * 0.85f).coerceAtLeast(0f)
+        val t = (totalTemp / 100f) * 24f
+        val gTint = (totalTint / 100f) * 18f
 
         val saturationMatrix = ColorMatrix().apply { setToSaturation(s) }
         val scaleTranslateMatrix = ColorMatrix(
             floatArrayOf(
                 c, 0f, 0f, 0f, b + t,
-                0f, c, 0f, 0f, b,
+                0f, c, 0f, 0f, b + gTint,
                 0f, 0f, c, 0f, b - t,
                 0f, 0f, 0f, 1f, 0f
             )

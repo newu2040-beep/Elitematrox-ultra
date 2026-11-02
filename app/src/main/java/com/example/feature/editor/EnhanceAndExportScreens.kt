@@ -10,6 +10,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,16 +43,22 @@ import androidx.compose.material.icons.filled.Replay5
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material.icons.outlined.Eco
+import androidx.compose.material.icons.outlined.Exposure
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Fullscreen
+import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Thermostat
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Verified
 import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material.icons.outlined.WbSunny
 import androidx.compose.material3.AlertDialog
@@ -101,7 +108,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.example.core.media.ProcessedVideoOutput
 import com.example.core.media.VideoProcessingEngine
-import kotlinx.coroutines.delay
+import com.example.domain.model.CinematicColorProfile
+import com.example.domain.model.DeviceHardwareCapabilities
 import com.example.domain.model.EnhancementAdjustments
 import com.example.domain.model.ExportConfiguration
 import com.example.domain.model.SocialMediaPreset
@@ -120,9 +128,10 @@ import com.example.ui.theme.neumorphicRaised
 import com.example.viewmodel.EliteMatrixViewModel
 import java.io.File
 import kotlin.math.abs
+import kotlinx.coroutines.delay
 
 /**
- * Screen 3 — Enhance Video (Exact reference mockup implementation).
+ * Screen 3 — Enhance Video (Exact reference mockup implementation + professional color grading).
  */
 @Composable
 fun EnhanceVideoScreen(
@@ -131,6 +140,7 @@ fun EnhanceVideoScreen(
     adjustments: EnhancementAdjustments,
     exportConfig: ExportConfiguration,
     onUpdateAdjustments: ((EnhancementAdjustments) -> EnhancementAdjustments) -> Unit,
+    onApplyCinematicProfile: (CinematicColorProfile) -> Unit = {},
     onResetAdjustments: () -> Unit,
     onSavePreset: (String) -> Unit,
     onImportNewVideo: () -> Unit,
@@ -258,22 +268,27 @@ fun EnhanceVideoScreen(
                 )
             }
 
-            // Before/After badge when comparing
-            if (compareOriginal) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(12.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color.Black.copy(alpha = 0.55f))
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = "BEFORE (Original)",
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
+            // Source Video Spec Badge (Top-Left)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(12.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(alpha = 0.58f))
+                    .clickable { compareOriginal = !compareOriginal }
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = if (compareOriginal) {
+                        "BEFORE (Original)"
+                    } else if (selectedVideo != null) {
+                        "${selectedVideo.exactDimensionsLabel} • ${selectedVideo.formattedFpsLabel} • ${adjustments.cinematicProfile.label}"
+                    } else {
+                        "Tap to Preview • ${adjustments.cinematicProfile.label}"
+                    },
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp)
+                )
             }
 
             // Center Play/Pause Circle Button
@@ -327,7 +342,51 @@ fun EnhanceVideoScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Cinematic Color Profiles Strip
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CinematicColorProfile.entries.forEach { profile ->
+                val isSelected = adjustments.cinematicProfile == profile
+                Box(
+                    modifier = Modifier
+                        .height(34.dp)
+                        .then(
+                            if (isSelected) {
+                                Modifier
+                                    .clip(RoundedCornerShape(17.dp))
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            listOf(neu.accentPrimary, neu.accentSecondary)
+                                        )
+                                    )
+                            } else {
+                                Modifier.neumorphicRaised(cornerRadius = 17.dp, elevation = 2.dp)
+                            }
+                        )
+                        .clickable { onApplyCinematicProfile(profile) }
+                        .padding(horizontal = 13.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = profile.label,
+                        color = if (isSelected) Color.White else neu.textPrimary,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 12.sp
+                        )
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
 
         // 3. Adjustments Neumorphic Card
         NeumorphicCard(
@@ -450,12 +509,71 @@ fun EnhanceVideoScreen(
                         HorizontalDivider(color = neu.divider)
                         Spacer(modifier = Modifier.height(10.dp))
 
+                        Text(
+                            text = "Pro Color Grading & Detail",
+                            color = neu.accentPrimary,
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // Exposure
+                        NeumorphicAdjustmentSliderRow(
+                            icon = Icons.Outlined.Exposure,
+                            iconTint = neu.sunAmber,
+                            label = "Exposure",
+                            value = adjustments.exposure,
+                            onValueChange = { v -> onUpdateAdjustments { it.copy(exposure = v) } },
+                            testTag = "slider_exposure"
+                        )
+
+                        // Vibrance
+                        NeumorphicAdjustmentSliderRow(
+                            icon = Icons.Outlined.AutoAwesome,
+                            iconTint = neu.dropletMint,
+                            label = "Vibrance",
+                            value = adjustments.vibrance,
+                            onValueChange = { v -> onUpdateAdjustments { it.copy(vibrance = v) } },
+                            testTag = "slider_vibrance"
+                        )
+
+                        // Highlights
+                        NeumorphicAdjustmentSliderRow(
+                            icon = Icons.Outlined.WbSunny,
+                            iconTint = neu.accentPrimary,
+                            label = "Highlights",
+                            value = adjustments.highlights,
+                            onValueChange = { v -> onUpdateAdjustments { it.copy(highlights = v) } },
+                            testTag = "slider_highlights"
+                        )
+
+                        // Shadows
+                        NeumorphicAdjustmentSliderRow(
+                            icon = Icons.Outlined.Contrast,
+                            iconTint = neu.textSecondary,
+                            label = "Shadows",
+                            value = adjustments.shadows,
+                            onValueChange = { v -> onUpdateAdjustments { it.copy(shadows = v) } },
+                            testTag = "slider_shadows"
+                        )
+
+                        // Tint (Green / Magenta)
+                        NeumorphicAdjustmentSliderRow(
+                            icon = Icons.Outlined.Palette,
+                            iconTint = neu.thermoOrange,
+                            label = "Tint (G/M)",
+                            value = adjustments.tint,
+                            onValueChange = { v -> onUpdateAdjustments { it.copy(tint = v) } },
+                            testTag = "slider_tint"
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
                         // Sharpening (unsharp filter)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Sharpening (Unsharp Mask)", style = MaterialTheme.typography.bodyMedium, color = neu.textPrimary)
+                            Text("Sharpness (Luma Unsharp Mask)", style = MaterialTheme.typography.bodyMedium, color = neu.textPrimary)
                             Text("${adjustments.sharpness}%", style = MaterialTheme.typography.labelLarge, color = neu.accentPrimary)
                         }
                         Slider(
@@ -500,12 +618,14 @@ fun EnhanceVideoScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         // Live FFmpeg Filter Graph Preview
-                        val cmdPreview = remember(adjustments, exportConfig) {
+                        val cmdPreview = remember(adjustments, exportConfig, selectedVideo) {
                             VideoProcessingEngine.buildFfmpegCommand(
                                 inputPath = selectedVideo?.fileName ?: "Nature_Video.mp4",
                                 outputPath = "output.mp4",
                                 adjustments = adjustments,
-                                exportConfig = exportConfig
+                                exportConfig = exportConfig,
+                                sourceWidth = selectedVideo?.displayWidth ?: 1920,
+                                sourceHeight = selectedVideo?.displayHeight ?: 1080
                             ).joinToString(" ")
                         }
                         Box(
@@ -557,16 +677,19 @@ fun EnhanceVideoScreen(
 }
 
 /**
- * Screen 4 — Export Settings (Exact reference mockup implementation).
+ * Screen 4 — Export Settings (Exact reference mockup implementation + 50/60/90/120 FPS, Hardware Display Hz detection,
+ * Audio Export options, and Social Media Anti-Recompression Engine).
  */
 @Composable
 fun ExportSettingsScreen(
     selectedVideo: VideoMetadata?,
     exportConfig: ExportConfiguration,
+    deviceCapabilities: DeviceHardwareCapabilities = DeviceHardwareCapabilities(),
     isProcessing: Boolean,
     processingProgress: Int,
     processingStatus: String,
     onUpdateExportConfig: ((ExportConfiguration) -> ExportConfiguration) -> Unit,
+    onApplyRecommendedHardwareSettings: () -> Unit = {},
     onSelectSocialPreset: (SocialMediaPreset) -> Unit,
     onSavePreset: (String) -> Unit,
     onStartExportJob: () -> Unit,
@@ -579,6 +702,13 @@ fun ExportSettingsScreen(
     var showSocialPresetSheet by rememberSaveable { mutableStateOf(false) }
     var showAdvancedExportControls by rememberSaveable { mutableStateOf(false) }
     var showSavePresetDialog by rememberSaveable { mutableStateOf(false) }
+
+    val (targetW, targetH) = exportConfig.targetDimensionsPx(
+        sourceWidth = selectedVideo?.displayWidth ?: 1920,
+        sourceHeight = selectedVideo?.displayHeight ?: 1080
+    )
+    val effectiveBitrateKbps = exportConfig.effectiveBitrateKbps(isCompressionWorkflow = false)
+    val effectiveMbps = "%.1f".format(effectiveBitrateKbps / 1000f)
 
     Column(
         modifier = Modifier
@@ -624,17 +754,90 @@ fun ExportSettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Hardware & Display Refresh Rate Intelligence Banner
+        NeumorphicCard(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = 16.dp,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Speed,
+                        contentDescription = null,
+                        tint = neu.accentPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "${deviceCapabilities.displayRefreshRateHz}Hz Display • HW ${deviceCapabilities.supportedCodecs.joinToString("/")} Ready",
+                            color = neu.textPrimary,
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        )
+                        Text(
+                            text = "Target Output: ${targetW}×${targetH} • ${exportConfig.fps} FPS CFR • $effectiveMbps Mbps",
+                            color = neu.accentPrimary,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(15.dp))
+                        .background(neu.accentPrimary.copy(alpha = 0.14f))
+                        .clickable(onClick = onApplyRecommendedHardwareSettings)
+                        .padding(horizontal = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Match ${deviceCapabilities.displayRefreshRateHz}Hz",
+                        color = neu.accentPrimary,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
 
         // 2. Resolution ("720p", "1080p", "2K", "4K")
-        Text(
-            text = "Resolution",
-            color = neu.textPrimary,
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.5.sp
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Resolution",
+                color = neu.textPrimary,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.5.sp
+                )
             )
-        )
+            Text(
+                text = "${targetW} × ${targetH} px",
+                color = neu.textSecondary,
+                style = MaterialTheme.typography.labelMedium
+            )
+        }
         Spacer(modifier = Modifier.height(10.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -650,17 +853,28 @@ fun ExportSettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // 3. Frame Rate ("24", "30", "60")
-        Text(
-            text = "Frame Rate",
-            color = neu.textPrimary,
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.5.sp
+        // 3. Frame Rate ("24", "30", "60" + High-Refresh "50", "90", "120" FPS)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Frame Rate",
+                color = neu.textPrimary,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.5.sp
+                )
             )
-        )
+            Text(
+                text = "${exportConfig.fps} FPS Constant (CFR)",
+                color = neu.accentPrimary,
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
+            )
+        }
         Spacer(modifier = Modifier.height(10.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -675,8 +889,22 @@ fun ExportSettingsScreen(
                 )
             }
         }
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            listOf(50, 90, 120).forEach { fpsVal ->
+                NeumorphicChoicePill(
+                    label = "$fpsVal FPS",
+                    selected = exportConfig.fps == fpsVal,
+                    testTag = "fps_pill_$fpsVal",
+                    onClick = { onUpdateExportConfig { it.copy(fps = fpsVal) } }
+                )
+            }
+        }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         // 4. Video Codec ("H.264", "H.265", "AV1")
         Text(
@@ -702,17 +930,28 @@ fun ExportSettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         // 5. Bitrate ("Auto" pill + "Custom       >" wide pill)
-        Text(
-            text = "Bitrate",
-            color = neu.textPrimary,
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.5.sp
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Bitrate",
+                color = neu.textPrimary,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.5.sp
+                )
             )
-        )
+            Text(
+                text = "$effectiveMbps Mbps (${exportConfig.bitrateMode})",
+                color = neu.textSecondary,
+                style = MaterialTheme.typography.labelMedium
+            )
+        }
         Spacer(modifier = Modifier.height(10.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -763,7 +1002,7 @@ fun ExportSettingsScreen(
                 ) {
                     Text(
                         text = if (isCustom) {
-                            "Custom (${exportConfig.customBitrateKbps / 1000} Mbps)"
+                            "Custom (${"%.1f".format(exportConfig.customBitrateKbps / 1000f)} Mbps)"
                         } else {
                             "Custom"
                         },
@@ -792,19 +1031,19 @@ fun ExportSettingsScreen(
                 contentPadding = PaddingValues(14.dp)
             ) {
                 val durationSec = ((selectedVideo?.durationMs ?: 15_000L) / 1000.0).coerceAtLeast(1.0)
-                val estBytes = ((exportConfig.effectiveBitrateKbps() + exportConfig.audioBitrateKbps) * 1000L / 8.0 * durationSec * 1.03).toLong()
+                val estBytes = ((effectiveBitrateKbps + exportConfig.audioBitrateKbps) * 1000L / 8.0 * durationSec * 1.02).toLong()
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Target Bitrate: ${exportConfig.customBitrateKbps} kbps",
+                            text = "Target Bitrate: ${exportConfig.customBitrateKbps} kbps (${"%.1f".format(exportConfig.customBitrateKbps / 1000f)} Mbps)",
                             style = MaterialTheme.typography.labelLarge,
                             color = neu.textPrimary
                         )
                         Text(
-                            text = "Est. Size: ~${EliteMatrixViewModel.formatBytes(estBytes)}",
+                            text = "Est. ~${EliteMatrixViewModel.formatBytes(estBytes)}",
                             style = MaterialTheme.typography.labelMedium,
                             color = neu.accentPrimary
                         )
@@ -816,14 +1055,14 @@ fun ExportSettingsScreen(
                                 it.copy(bitrateMode = "Custom", customBitrateKbps = v.toInt())
                             }
                         },
-                        valueRange = 1000f..50000f,
+                        valueRange = 1500f..65000f,
                         colors = SliderDefaults.colors(activeTrackColor = neu.accentPrimary)
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         // 6. Format ("MP4", "MOV", "MKV")
         Text(
@@ -849,11 +1088,11 @@ fun ExportSettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
-        HorizontalDivider(color = neu.divider)
         Spacer(modifier = Modifier.height(16.dp))
+        HorizontalDivider(color = neu.divider)
+        Spacer(modifier = Modifier.height(14.dp))
 
-        // 7. Social Media Presets ("TikTok / 1080 × 1920 • 30 FPS   >")
+        // 7. Social Media Presets & Anti-Recompression Engine
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -868,7 +1107,7 @@ fun ExportSettingsScreen(
                 )
             )
             Text(
-                text = if (showAdvancedExportControls) "Hide Advanced" else "Advanced",
+                text = if (showAdvancedExportControls) "Hide Audio & Encoder" else "Audio & Encoder",
                 color = neu.accentPrimary,
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                 modifier = Modifier
@@ -888,33 +1127,43 @@ fun ExportSettingsScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
             onClick = { showSocialPresetSheet = !showSocialPresetSheet }
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SocialPresetBadgeIcon(presetName = activeSocial.title)
-                Spacer(modifier = Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = activeSocial.title,
-                        color = neu.textPrimary,
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SocialPresetBadgeIcon(presetName = activeSocial.title)
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = activeSocial.title,
+                            color = neu.textPrimary,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
+                            )
                         )
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = activeSocial.subtitle,
-                        color = neu.textSecondary,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.5.sp)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = activeSocial.subtitle,
+                            color = neu.textSecondary,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.5.sp)
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "Choose Social Media Preset",
+                        tint = neu.textSecondary
                     )
                 }
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = "Choose Social Media Preset",
-                    tint = neu.textSecondary
-                )
+                if (exportConfig.socialOptimizationEnabled) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "✓ Anti-Recompression Guard: ${activeSocial.antiCompressionNote}",
+                        color = neu.accentPrimary,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp)
+                    )
+                }
             }
         }
 
@@ -944,8 +1193,13 @@ fun ExportSettingsScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(preset.title, style = MaterialTheme.typography.titleMedium, color = neu.textPrimary)
                                 Text(
-                                    "${preset.subtitle} • Recommended profile",
+                                    "${preset.subtitle} • ${"%.1f".format(preset.bitrateKbps / 1000f)} Mbps",
                                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp),
+                                    color = neu.accentPrimary
+                                )
+                                Text(
+                                    preset.antiCompressionNote,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
                                     color = neu.textSecondary
                                 )
                             }
@@ -964,12 +1218,107 @@ fun ExportSettingsScreen(
                 contentPadding = PaddingValues(14.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = "Advanced Encoder Controls",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = neu.textPrimary
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.GraphicEq,
+                            contentDescription = null,
+                            tint = neu.accentPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Master Audio & Encoder Studio",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = neu.textPrimary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Audio Codec
+                    Text("Audio Codec", style = MaterialTheme.typography.labelLarge, color = neu.textPrimary)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("AAC-LC", "HE-AAC", "Opus").forEach { aCodec ->
+                            NeumorphicChoicePill(
+                                label = aCodec,
+                                selected = exportConfig.audioCodec == aCodec,
+                                onClick = { onUpdateExportConfig { it.copy(audioCodec = aCodec) } }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Audio Bitrate
+                    Text("Audio Bitrate (kbps)", style = MaterialTheme.typography.labelLarge, color = neu.textPrimary)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(128, 192, 256, 320).forEach { aBitrate ->
+                            NeumorphicChoicePill(
+                                label = "${aBitrate}k",
+                                selected = exportConfig.audioBitrateKbps == aBitrate,
+                                onClick = { onUpdateExportConfig { it.copy(audioBitrateKbps = aBitrate) } }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Audio Sample Rate
+                    Text("Audio Sample Rate", style = MaterialTheme.typography.labelLarge, color = neu.textPrimary)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(44100 to "44.1 kHz", 48000 to "48 kHz").forEach { (hz, label) ->
+                            NeumorphicChoicePill(
+                                label = label,
+                                selected = exportConfig.audioSampleRateHz == hz,
+                                onClick = { onUpdateExportConfig { it.copy(audioSampleRateHz = hz) } }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = neu.divider)
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Social Anti-Recompression Lock Switch
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Social Anti-Recompression Guard",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = neu.textPrimary
+                            )
+                            Text(
+                                "Locks CFR, BT.709 color & 2s GOP to prevent upload quality loss",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
+                                color = neu.textSecondary
+                            )
+                        }
+                        Switch(
+                            checked = exportConfig.socialOptimizationEnabled,
+                            onCheckedChange = { checked ->
+                                onUpdateExportConfig { it.copy(socialOptimizationEnabled = checked) }
+                            }
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(8.dp))
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -1030,7 +1379,7 @@ fun ExportSettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(22.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
         // 8. Bottom Primary Emerald CTA Button: "[↑] Export Video"
         EmeraldPillButton(
@@ -1063,7 +1412,7 @@ fun ExportSettingsScreen(
 }
 
 /**
- * Screen 5 — Processing Complete! (Exact reference mockup implementation).
+ * Screen 5 — Processing Complete! (Exact reference mockup implementation + Verified Output Spec Card).
  */
 @Composable
 fun ProcessingCompleteScreen(
@@ -1085,7 +1434,7 @@ fun ProcessingCompleteScreen(
     val savingsLabel = if (savedPct >= 0) {
         "$savedPct% smaller"
     } else {
-        "${abs(savedPct)}% HQ size increase"
+        "${abs(savedPct)}% HQ bitrate boost"
     }
 
     Box(
@@ -1128,18 +1477,18 @@ fun ProcessingCompleteScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 24.dp),
+                .padding(horizontal = 24.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             // 1. Concentric Mint Halo Checkmark Hero + Title & Subtitle
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 ProcessingCompleteCheckmarkHero()
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 Text(
                     text = "Processing Complete!",
                     color = neu.textPrimary,
@@ -1148,7 +1497,7 @@ fun ProcessingCompleteScreen(
                         fontSize = 23.sp
                     )
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "Your video is ready",
                     color = neu.textSecondary,
@@ -1156,9 +1505,9 @@ fun ProcessingCompleteScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // 2. Output Summary Card ("Nature_Video.mp4" / "24.5 MB → 18.7 MB" / "🌿 24% smaller")
+            // 2. Output Summary Card ("Nature_Video.mp4" / "24.5 MB → 18.7 MB" / "🌿 24% smaller") + Verified Spec Table
             NeumorphicCard(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1166,80 +1515,152 @@ fun ProcessingCompleteScreen(
                 cornerRadius = 22.dp,
                 contentPadding = PaddingValues(16.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(width = 90.dp, height = 68.dp)
-                            .clip(RoundedCornerShape(14.dp))
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        VideoThumbnailPreview(
-                            thumbnailBitmap = thumbnailBitmap,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = fileName,
-                            color = neu.textPrimary,
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
-                            ),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "${EliteMatrixViewModel.formatBytes(origBytes)} → ${EliteMatrixViewModel.formatBytes(outBytes)}",
-                            color = neu.textSecondary,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp)
-                        )
-                        Spacer(modifier = Modifier.height(5.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Outlined.Eco,
-                                contentDescription = null,
-                                tint = neu.accentPrimary,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = savingsLabel,
-                                color = neu.accentPrimary,
-                                style = MaterialTheme.typography.labelLarge.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.5.sp
-                                )
+                        Box(
+                            modifier = Modifier
+                                .size(width = 90.dp, height = 68.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                        ) {
+                            VideoThumbnailPreview(
+                                thumbnailBitmap = thumbnailBitmap,
+                                modifier = Modifier.fillMaxSize()
                             )
                         }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Filled.CheckCircle,
-                                contentDescription = null,
-                                tint = neu.accentPrimary,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
+
+                        Spacer(modifier = Modifier.width(16.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Auto-saved to Gallery (${completedOutput?.galleryRelativePath ?: "Movies/EliteMatrix"})",
-                                color = neu.textSecondary,
-                                style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
+                                text = fileName,
+                                color = neu.textPrimary,
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp
+                                ),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "${EliteMatrixViewModel.formatBytes(origBytes)} → ${EliteMatrixViewModel.formatBytes(outBytes)}",
+                                color = neu.textSecondary,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp)
+                            )
+                            Spacer(modifier = Modifier.height(5.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Eco,
+                                    contentDescription = null,
+                                    tint = neu.accentPrimary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = savingsLabel,
+                                    color = neu.accentPrimary,
+                                    style = MaterialTheme.typography.labelLarge.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.5.sp
+                                    )
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    tint = neu.accentPrimary,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Saved to Gallery (${completedOutput?.galleryRelativePath ?: "Movies/EliteMatrix"})",
+                                    color = neu.textSecondary,
+                                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
+                    }
+
+                    if (completedOutput != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = neu.divider)
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Outlined.Verified,
+                                contentDescription = null,
+                                tint = neu.accentPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Verified Exported File Metadata",
+                                color = neu.textPrimary,
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        val srcW = completedOutput.sourceMetadata?.displayWidth ?: completedOutput.width
+                        val srcH = completedOutput.sourceMetadata?.displayHeight ?: completedOutput.height
+                        val srcFps = completedOutput.sourceMetadata?.fps?.toInt() ?: 30
+                        val outMbps = "%.1f".format(completedOutput.bitrateKbps / 1000f)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Resolution: ${srcW}×${srcH} → ${completedOutput.width}×${completedOutput.height} (${completedOutput.resolutionLabel})",
+                                color = neu.textSecondary,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Frame Rate: ${srcFps} FPS → ${completedOutput.fps} FPS CFR",
+                                color = neu.accentPrimary,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.5.sp
+                                )
+                            )
+                            Text(
+                                text = "Bitrate: $outMbps Mbps",
+                                color = neu.textPrimary,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.5.sp
+                                )
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Streams: ${completedOutput.codec} (${completedOutput.containerFormat}) • ${completedOutput.audioCodec} ${completedOutput.audioBitrateKbps} kbps (${completedOutput.audioSampleRateHz / 1000.0} kHz)",
+                            color = neu.textSecondary,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp)
+                        )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(22.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
             // 3. Action Buttons ("▶ Open Video", "<o> Share", "[Folder] Go to Projects")
             Column(
@@ -1298,7 +1719,7 @@ fun ProcessingCompleteScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
         }
     }
 }

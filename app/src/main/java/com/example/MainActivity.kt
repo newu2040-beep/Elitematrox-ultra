@@ -18,6 +18,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -127,7 +128,8 @@ fun EliteMatrixRootApp() {
 
     EliteMatrixTheme(
         themePalette = appPrefs.themePalette,
-        themeMode = appPrefs.themeMode
+        themeMode = appPrefs.themeMode,
+        fontFamily = appPrefs.fontFamily
     ) {
         val isAuthenticated = currentUser != null
         val isGuest = appPrefs.isGuestMode
@@ -252,8 +254,9 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
         }
     }
 
-    // Request permissions on startup and load real H.264 sample video if none is loaded yet
+    // Request permissions on startup, detect hardware display capabilities, and load real H.264 sample video if none is loaded yet
     LaunchedEffect(Unit) {
+        viewModel.refreshDeviceCapabilities(context)
         requestAllRuntimePermissions()
         if (editorState.selectedVideo == null) {
             viewModel.loadOrGenerateSampleVideo(context, targetScreen = null)
@@ -315,7 +318,7 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
                     modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Box(modifier = Modifier.widthIn(max = 560.dp)) {
+                    Box(modifier = Modifier.widthIn(max = 600.dp)) {
                         EliteMatrixBottomNavigationBar(
                             activeScreen = editorState.activeScreen,
                             onSelectTab = { tab ->
@@ -328,17 +331,18 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
             }
         }
     ) { innerPadding ->
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .background(neu.canvas)
                 .padding(innerPadding),
             contentAlignment = Alignment.TopCenter
         ) {
+            val contentMaxWidth = if (maxWidth >= 600.dp) 620.dp else 560.dp
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = 560.dp)
+                    .widthIn(max = contentMaxWidth)
             ) {
                 // Non-intrusive Neumorphic status toast banner
                 AnimatedVisibility(
@@ -443,6 +447,9 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
                                 onUpdateAdjustments = { transform ->
                                     viewModel.updateAdjustments(transform)
                                 },
+                                onApplyCinematicProfile = { profile ->
+                                    viewModel.applyCinematicProfile(profile)
+                                },
                                 onResetAdjustments = {
                                     viewModel.resetAdjustments()
                                 },
@@ -477,11 +484,15 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
                             ExportSettingsScreen(
                                 selectedVideo = editorState.selectedVideo,
                                 exportConfig = editorState.exportConfig,
+                                deviceCapabilities = editorState.deviceCapabilities,
                                 isProcessing = editorState.isProcessing,
                                 processingProgress = editorState.processingProgress,
                                 processingStatus = editorState.processingStatus,
                                 onUpdateExportConfig = { transform ->
                                     viewModel.updateExportConfig(transform)
+                                },
+                                onApplyRecommendedHardwareSettings = {
+                                    viewModel.applyRecommendedHardwareSettings()
                                 },
                                 onSelectSocialPreset = { socialPreset ->
                                     viewModel.applySocialPreset(socialPreset)
@@ -610,6 +621,9 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
                                 },
                                 onSelectThemeMode = { mode ->
                                     viewModel.setThemeMode(mode)
+                                },
+                                onSelectFontFamily = { font ->
+                                    viewModel.setFontFamily(font)
                                 },
                                 onSelectRoute = { route ->
                                     viewModel.setDefaultRoute(route)

@@ -1,5 +1,7 @@
 package com.example.domain.model
 
+import kotlin.math.roundToInt
+
 enum class ThemePalette(val displayName: String, val isDarkPalette: Boolean = false) {
     WarmIvory("Warm Ivory (Default)", false),
     SoftMint("Soft Mint", false),
@@ -25,10 +27,40 @@ enum class ThemeMode(val displayName: String) {
     System("Follow System")
 }
 
+enum class AppFontFamily(val displayName: String, val subtitle: String) {
+    PlusJakarta("Plus Jakarta Sans", "Geometric Studio Display"),
+    InterFont("Inter Modern", "High-Legibility UI Sans"),
+    SystemDefault("System Sans-Serif", "Native Android Roboto"),
+    EditorialSerif("Editorial Serif", "Classic Cinema Serif"),
+    TechnicalMono("Studio Monospace", "Precision Timecode Mono")
+}
+
 enum class ExecutionRoute(val label: String) {
     Auto("Auto"),
     Local("Local"),
     Cloud("Cloud")
+}
+
+enum class CinematicColorProfile(
+    val displayName: String,
+    val description: String,
+    val contrastDelta: Int,
+    val saturationDelta: Int,
+    val temperatureDelta: Int,
+    val tintDelta: Int,
+    val vibranceDelta: Int
+) {
+    Neutral("Neutral (Original)", "True-to-source color balance", 0, 0, 0, 0, 0),
+    TealAndOrange("Cinematic Teal & Orange", "Hollywood complementary shadow/highlight grade", 14, 8, -8, -4, 18),
+    HdrVivid("HDR Vivid Boost", "Expanded dynamic micro-contrast and rich chroma", 18, 16, 2, 0, 24),
+    GoldenHour("Warm Golden Hour", "Sunlit amber warmth with soft highlight roll-off", 8, 12, 22, 4, 14),
+    CrispDaylight("Crisp Daylight", "Clean neutral whites with enhanced clarity", 12, 6, -6, 0, 12),
+    MoodyMatte("Moody Matte Film", "Lifted cinema blacks with desaturated tones", 6, -18, -4, 2, -10),
+    CyberpunkNeon("Cyberpunk Neon", "High-contrast magenta and cyan night grade", 20, 22, -14, 16, 25),
+    MonochromeBw("Studio Monochrome", "High-dynamic-range silver gelatin black & white", 22, -100, 0, 0, 0);
+
+    val label: String
+        get() = displayName
 }
 
 enum class CompressionMode(
@@ -37,11 +69,11 @@ enum class CompressionMode(
     val defaultCrf: Int,
     val bitrateFactor: Float
 ) {
-    Smart("Smart", "Adaptive bitrate based on motion and resolution", 21, 0.68f),
-    Balanced("Balanced", "Optimal balance of visual quality and file size", 23, 0.58f),
-    HighQuality("High Quality", "Visually lossless compression with higher bitrate", 18, 0.82f),
-    MaxCompression("Maximum Compression", "Smallest file size for quick messaging", 28, 0.38f),
-    Custom("Custom", "Manual target size, CRF, bitrate and codec control", 20, 0.72f)
+    Smart("Smart", "Adaptive bitrate based on motion and resolution", 21, 0.72f),
+    Balanced("Balanced", "Optimal balance of visual quality and file size", 23, 0.60f),
+    HighQuality("High Quality", "Visually lossless compression with high bitrate", 18, 0.90f),
+    MaxCompression("Maximum Compression", "Smallest file size for quick messaging", 28, 0.42f),
+    Custom("Custom", "Manual target size, CRF, bitrate and codec control", 20, 1.0f)
 }
 
 enum class SocialMediaPreset(
@@ -53,29 +85,35 @@ enum class SocialMediaPreset(
     val fps: Int,
     val codec: String,
     val bitrateKbps: Int,
-    val containerFormat: String
+    val containerFormat: String,
+    val audioBitrateKbps: Int = 256,
+    val antiCompressionNote: String = "CFR locked • BT.709 • FastStart moov • 2s GOP"
 ) {
     TikTok(
         title = "TikTok",
-        subtitle = "1080 × 1920 • 30 FPS",
+        subtitle = "1080 × 1920 • 60 FPS",
         resolution = "1080p",
         width = 1080,
         height = 1920,
-        fps = 30,
+        fps = 60,
         codec = "H.264",
-        bitrateKbps = 10000,
-        containerFormat = "MP4"
+        bitrateKbps = 12500,
+        containerFormat = "MP4",
+        audioBitrateKbps = 256,
+        antiCompressionNote = "Tuned below TikTok's re-encode ceiling with 60 FPS CFR & High@L4.2"
     ),
     InstagramReels(
         title = "Instagram Reels",
-        subtitle = "1080 × 1920 • 30 FPS",
+        subtitle = "1080 × 1920 • 60 FPS",
         resolution = "1080p",
         width = 1080,
         height = 1920,
-        fps = 30,
+        fps = 60,
         codec = "H.264",
-        bitrateKbps = 12000,
-        containerFormat = "MP4"
+        bitrateKbps = 14000,
+        containerFormat = "MP4",
+        audioBitrateKbps = 256,
+        antiCompressionNote = "Optimized for Reels High-Quality Upload with BT.709 & AAC 48kHz"
     ),
     YouTubeShorts(
         title = "YouTube Shorts",
@@ -85,10 +123,65 @@ enum class SocialMediaPreset(
         height = 1920,
         fps = 60,
         codec = "H.264",
-        bitrateKbps = 16000,
-        containerFormat = "MP4"
+        bitrateKbps = 18000,
+        containerFormat = "MP4",
+        audioBitrateKbps = 320,
+        antiCompressionNote = "High-bitrate 60 FPS VP9/AVC ingest profile to preserve fine detail"
+    ),
+    YouTube4KMaster(
+        title = "YouTube 4K UHD",
+        subtitle = "3840 × 2160 • 60 FPS",
+        resolution = "4K",
+        width = 3840,
+        height = 2160,
+        fps = 60,
+        codec = "H.265",
+        bitrateKbps = 42000,
+        containerFormat = "MP4",
+        audioBitrateKbps = 320,
+        antiCompressionNote = "Triggers YouTube VP9/AV1 high-tier transcode pipeline"
+    ),
+    WhatsAppHdStatus(
+        title = "WhatsApp Status HD",
+        subtitle = "1080 × 1920 • 30 FPS",
+        resolution = "1080p",
+        width = 1080,
+        height = 1920,
+        fps = 30,
+        codec = "H.264",
+        bitrateKbps = 6500,
+        containerFormat = "MP4",
+        audioBitrateKbps = 192,
+        antiCompressionNote = "Matches WhatsApp HD media limit to bypass aggressive status downscaling"
+    ),
+    TwitterXStudio(
+        title = "X / Twitter Studio",
+        subtitle = "1920 × 1080 • 60 FPS",
+        resolution = "1080p",
+        width = 1920,
+        height = 1080,
+        fps = 60,
+        codec = "H.264",
+        bitrateKbps = 15000,
+        containerFormat = "MP4",
+        audioBitrateKbps = 256,
+        antiCompressionNote = "Strict 60 FPS CFR & 2s keyframe cadence for X studio player"
     )
 }
+
+data class DeviceHardwareCapabilities(
+    val displayRefreshRateHz: Int = 60,
+    val supportedDisplayModesHz: List<Int> = listOf(60),
+    val supportedFpsOptions: List<Int> = listOf(24, 30, 50, 60, 90, 120),
+    val maxHardwareFps1080p: Int = 120,
+    val maxHardwareFps4k: Int = 60,
+    val supportedCodecs: List<String> = listOf("H.264", "H.265"),
+    val hardwareEncoderNames: List<String> = emptyList(),
+    val maxSupportedBitrateKbps: Int = 80000,
+    val supportsHdrDisplay: Boolean = false,
+    val recommendedFps: Int = 60,
+    val recommendedResolution: String = "1080p"
+)
 
 data class VideoMetadata(
     val uriString: String = "",
@@ -101,6 +194,9 @@ data class VideoMetadata(
     val bitrateKbps: Int = 8500,
     val videoCodec: String = "H.264 / AVC",
     val audioCodec: String = "AAC-LC",
+    val audioSampleRateHz: Int = 48000,
+    val audioBitrateKbps: Int = 192,
+    val audioChannels: Int = 2,
     val pixelFormat: String = "yuv420p",
     val rotationDegrees: Int = 0,
     val streamCount: Int = 2,
@@ -110,6 +206,15 @@ data class VideoMetadata(
     val containerFormat: String = "MP4",
     val isVfr: Boolean = false
 ) {
+    val isPortrait: Boolean
+        get() = if (rotationDegrees == 90 || rotationDegrees == 270) width > height else height > width
+
+    val displayWidth: Int
+        get() = if (rotationDegrees == 90 || rotationDegrees == 270) height else width
+
+    val displayHeight: Int
+        get() = if (rotationDegrees == 90 || rotationDegrees == 270) width else height
+
     val resolutionLabel: String
         get() {
             val shortSide = minOf(width, height)
@@ -118,16 +223,22 @@ data class VideoMetadata(
                 shortSide >= 1440 -> "2K"
                 shortSide >= 1080 -> "1080p"
                 shortSide >= 720 -> "720p"
-                else -> "${width}×${height}"
+                else -> "${displayWidth}×${displayHeight}"
             }
         }
 
+    val exactDimensionsLabel: String
+        get() = "${displayWidth}×${displayHeight}"
+
+    val formattedFpsLabel: String
+        get() = if (fps % 1f == 0f) "${fps.roundToInt()} FPS" else "${"%.1f".format(fps)} FPS"
+
     val aspectRatioLabel: String
         get() {
-            if (width <= 0 || height <= 0) return "16:9"
+            if (displayWidth <= 0 || displayHeight <= 0) return "16:9"
             fun gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)
-            val g = gcd(width, height)
-            return "${width / g}:${height / g}"
+            val g = gcd(displayWidth, displayHeight)
+            return "${displayWidth / g}:${displayHeight / g}"
         }
 }
 
@@ -136,21 +247,27 @@ data class EnhancementAdjustments(
     val contrast: Int = 20,
     val saturation: Int = 10,
     val temperature: Int = 0,
-    // Advanced Options
-    val gamma: Float = 1.0f,
-    val tint: Int = 0,
+    // Professional Color Grading & Tone Mapping
+    val exposure: Int = 0,
+    val vibrance: Int = 10,
     val highlights: Int = 0,
     val shadows: Int = 0,
+    val tint: Int = 0,
+    val gamma: Float = 1.0f,
+    // Detail & Restoration
     val sharpness: Int = 20,
     val denoise: Int = 10,
     val deinterlace: Boolean = false,
+    val cinematicProfile: CinematicColorProfile = CinematicColorProfile.Neutral,
     val cropRatio: String = "Original",
     val rotationDegrees: Int = 0
 ) {
     fun isDefault(): Boolean =
         brightness == 0 && contrast == 0 && saturation == 0 && temperature == 0 &&
-            gamma == 1.0f && tint == 0 && highlights == 0 && shadows == 0 &&
+            exposure == 0 && vibrance == 0 && highlights == 0 && shadows == 0 &&
+            gamma == 1.0f && tint == 0 &&
             sharpness == 0 && denoise == 0 && !deinterlace &&
+            cinematicProfile == CinematicColorProfile.Neutral &&
             cropRatio == "Original" && rotationDegrees == 0
 
     companion object {
@@ -159,13 +276,16 @@ data class EnhancementAdjustments(
             contrast = 0,
             saturation = 0,
             temperature = 0,
-            gamma = 1.0f,
-            tint = 0,
+            exposure = 0,
+            vibrance = 0,
             highlights = 0,
             shadows = 0,
+            tint = 0,
+            gamma = 1.0f,
             sharpness = 0,
             denoise = 0,
             deinterlace = false,
+            cinematicProfile = CinematicColorProfile.Neutral,
             cropRatio = "Original",
             rotationDegrees = 0
         )
@@ -174,46 +294,93 @@ data class EnhancementAdjustments(
 
 data class ExportConfiguration(
     val resolution: String = "1080p", // "720p", "1080p", "2K", "4K", "Original"
-    val fps: Int = 30,                // 24, 30, 60
+    val fps: Int = 60,                // 24, 30, 50, 60, 90, 120
     val codec: String = "H.264",      // "H.264", "H.265", "AV1"
     val bitrateMode: String = "Auto", // "Auto", "Custom"
-    val customBitrateKbps: Int = 12000,
+    val customBitrateKbps: Int = 14000,
     val containerFormat: String = "MP4", // "MP4", "MOV", "MKV"
     val selectedSocialPreset: SocialMediaPreset = SocialMediaPreset.TikTok,
+    val socialOptimizationEnabled: Boolean = true, // CFR lock, BT.709, faststart, platform ceiling
     // Advanced Export / HQ Encoder Controls
-    val crf: Int = 19,
-    val rateControl: String = "CRF", // "CRF", "CBR", "VBR 2-Pass"
+    val crf: Int = 18,
+    val rateControl: String = "CBR/VBR", // "CRF", "CBR", "VBR"
     val encoderPreset: String = "medium", // "ultrafast", "fast", "medium", "slow"
-    val profileLevel: String = "High@L4.1",
+    val profileLevel: String = "High@L4.2",
     val keyframeIntervalSec: Int = 2,
     val pixelFormat: String = "yuv420p",
-    val audioCodec: String = "AAC",
-    val audioBitrateKbps: Int = 192,
-    val audioSampleRateHz: Int = 48000,
+    // Advanced Audio Export Controls
+    val audioCodec: String = "AAC-LC", // "AAC-LC", "HE-AAC", "Opus"
+    val audioBitrateKbps: Int = 256,   // 128, 192, 256, 320
+    val audioSampleRateHz: Int = 48000, // 44100, 48000
+    val audioChannels: Int = 2,        // 1 (Mono), 2 (Stereo)
+    val normalizeAudio: Boolean = true,
     val preserveMetadata: Boolean = true,
-    val compressionMode: CompressionMode = CompressionMode.Smart,
+    val compressionMode: CompressionMode = CompressionMode.HighQuality,
     val hqEncoderPresetName: String = "HQ Standard"
 ) {
-    fun effectiveBitrateKbps(): Int {
-        if (bitrateMode == "Custom") return customBitrateKbps.coerceIn(500, 150000)
-        val base = when (resolution) {
-            "720p" -> 5500
-            "1080p" -> 10500
-            "2K" -> 20000
-            "4K" -> 38000
-            else -> 10500
+    /**
+     * Computes the exact target video bitrate in kbps for the selected resolution, FPS, and codec.
+     * In Export / Enhance mode, respects the full quality bitrate without unexpected down-scaling.
+     */
+    fun effectiveBitrateKbps(isCompressionWorkflow: Boolean = false): Int {
+        if (bitrateMode == "Custom") return customBitrateKbps.coerceIn(500, 160000)
+        val base1080p30 = when (resolution) {
+            "720p" -> 6500
+            "1080p" -> 12000
+            "2K" -> 24000
+            "4K" -> 45000
+            else -> 12000
         }
-        val fpsMultiplier = when (fps) {
-            60 -> 1.45f
-            24 -> 0.88f
+        val fpsMultiplier = when {
+            fps >= 120 -> 2.20f
+            fps >= 90 -> 1.80f
+            fps >= 60 -> 1.45f
+            fps >= 50 -> 1.30f
+            fps <= 24 -> 0.88f
             else -> 1.0f
         }
         val codecMultiplier = when (codec) {
-            "H.265" -> 0.72f
-            "AV1" -> 0.65f
+            "H.265" -> 0.78f
+            "AV1" -> 0.70f
             else -> 1.0f
         }
-        return (base * fpsMultiplier * codecMultiplier * compressionMode.bitrateFactor).toInt().coerceAtLeast(800)
+        val modeFactor = if (isCompressionWorkflow) compressionMode.bitrateFactor else 1.0f
+        return (base1080p30 * fpsMultiplier * codecMultiplier * modeFactor).roundToInt().coerceIn(800, 160000)
+    }
+
+    /**
+     * Computes the exact output (width, height) in pixels preserving source aspect orientation
+     * (Portrait vs Landscape) and aligning to 16-pixel macroblock boundaries for hardware encoders.
+     */
+    fun targetDimensionsPx(sourceWidth: Int = 1920, sourceHeight: Int = 1080): Pair<Int, Int> {
+        val safeSrcW = if (sourceWidth > 0) sourceWidth else 1920
+        val safeSrcH = if (sourceHeight > 0) sourceHeight else 1080
+        val isPortrait = safeSrcH > safeSrcW
+        val aspect = safeSrcW.toDouble() / safeSrcH.toDouble()
+
+        val targetShortSide = when (resolution) {
+            "720p" -> 720
+            "1080p" -> 1080
+            "2K" -> 1440
+            "4K" -> 2160
+            "Original" -> minOf(safeSrcW, safeSrcH)
+            else -> 1080
+        }
+
+        val rawW: Int
+        val rawH: Int
+        if (isPortrait) {
+            rawW = targetShortSide
+            rawH = (targetShortSide / aspect).roundToInt()
+        } else {
+            rawH = targetShortSide
+            rawW = (targetShortSide * aspect).roundToInt()
+        }
+
+        // Align to 2-pixel even boundaries so 1080p stays exact 1920×1080 / 1080×1920
+        val alignedW = ((rawW + 1) / 2 * 2).coerceAtLeast(320)
+        val alignedH = ((rawH + 1) / 2 * 2).coerceAtLeast(320)
+        return alignedW to alignedH
     }
 
     fun targetHeightPx(sourceHeight: Int = 1080): Int = when (resolution) {
@@ -286,108 +453,8 @@ object BuiltInPresets {
     val defaultHqPresets: List<PresetItem> = listOf(
         PresetItem(
             id = "builtin_hq_standard",
-            name = "HQ Standard",
+            name = "HQ Standard 60FPS",
             category = "hq_encoder",
-            resolution = "1080p",
-            fps = 30,
-            codec = "H.264",
-            bitrateMode = "Auto",
-            bitrateKbps = 12000,
-            containerFormat = "MP4",
-            crf = 18,
-            encoderPreset = "medium",
-            brightness = 10,
-            contrast = 15,
-            saturation = 8,
-            temperature = 0,
-            sharpness = 20,
-            denoise = 10,
-            isBuiltIn = true
-        ),
-        PresetItem(
-            id = "builtin_hq_high_detail",
-            name = "HQ High Detail",
-            category = "hq_encoder",
-            resolution = "2K",
-            fps = 60,
-            codec = "H.265",
-            bitrateMode = "Custom",
-            bitrateKbps = 24000,
-            containerFormat = "MP4",
-            crf = 16,
-            encoderPreset = "slow",
-            brightness = 5,
-            contrast = 18,
-            saturation = 6,
-            temperature = 0,
-            sharpness = 35,
-            denoise = 15,
-            isBuiltIn = true
-        ),
-        PresetItem(
-            id = "builtin_hq_social",
-            name = "HQ Social Media",
-            category = "social",
-            resolution = "1080p",
-            fps = 30,
-            codec = "H.264",
-            bitrateMode = "Custom",
-            bitrateKbps = 11000,
-            containerFormat = "MP4",
-            crf = 19,
-            encoderPreset = "medium",
-            brightness = 15,
-            contrast = 20,
-            saturation = 10,
-            temperature = 0,
-            sharpness = 25,
-            denoise = 10,
-            isBuiltIn = true
-        ),
-        PresetItem(
-            id = "builtin_hq_tiktok",
-            name = "HQ TikTok",
-            category = "social",
-            resolution = "1080p",
-            fps = 30,
-            codec = "H.264",
-            bitrateMode = "Custom",
-            bitrateKbps = 10000,
-            containerFormat = "MP4",
-            crf = 19,
-            encoderPreset = "medium",
-            brightness = 15,
-            contrast = 20,
-            saturation = 10,
-            temperature = 0,
-            sharpness = 22,
-            denoise = 8,
-            isBuiltIn = true
-        ),
-        PresetItem(
-            id = "builtin_hq_reels",
-            name = "HQ Instagram Reels",
-            category = "social",
-            resolution = "1080p",
-            fps = 30,
-            codec = "H.264",
-            bitrateMode = "Custom",
-            bitrateKbps = 12000,
-            containerFormat = "MP4",
-            crf = 18,
-            encoderPreset = "medium",
-            brightness = 12,
-            contrast = 18,
-            saturation = 10,
-            temperature = 2,
-            sharpness = 20,
-            denoise = 8,
-            isBuiltIn = true
-        ),
-        PresetItem(
-            id = "builtin_hq_shorts",
-            name = "HQ YouTube Shorts",
-            category = "social",
             resolution = "1080p",
             fps = 60,
             codec = "H.264",
@@ -400,7 +467,127 @@ object BuiltInPresets {
             contrast = 15,
             saturation = 8,
             temperature = 0,
-            sharpness = 18,
+            sharpness = 22,
+            denoise = 10,
+            isBuiltIn = true
+        ),
+        PresetItem(
+            id = "builtin_hq_high_detail",
+            name = "HQ 2K 60FPS Master",
+            category = "hq_encoder",
+            resolution = "2K",
+            fps = 60,
+            codec = "H.265",
+            bitrateMode = "Custom",
+            bitrateKbps = 28000,
+            containerFormat = "MP4",
+            crf = 16,
+            encoderPreset = "slow",
+            brightness = 5,
+            contrast = 18,
+            saturation = 10,
+            temperature = 0,
+            sharpness = 35,
+            denoise = 12,
+            isBuiltIn = true
+        ),
+        PresetItem(
+            id = "builtin_hq_120fps_smooth",
+            name = "Ultra Smooth 120FPS",
+            category = "hq_encoder",
+            resolution = "1080p",
+            fps = 120,
+            codec = "H.265",
+            bitrateMode = "Custom",
+            bitrateKbps = 26000,
+            containerFormat = "MP4",
+            crf = 17,
+            encoderPreset = "fast",
+            brightness = 8,
+            contrast = 16,
+            saturation = 10,
+            temperature = 0,
+            sharpness = 25,
+            denoise = 8,
+            isBuiltIn = true
+        ),
+        PresetItem(
+            id = "builtin_hq_social",
+            name = "Social Media Anti-Compress",
+            category = "social",
+            resolution = "1080p",
+            fps = 60,
+            codec = "H.264",
+            bitrateMode = "Custom",
+            bitrateKbps = 14000,
+            containerFormat = "MP4",
+            crf = 18,
+            encoderPreset = "medium",
+            brightness = 12,
+            contrast = 18,
+            saturation = 10,
+            temperature = 0,
+            sharpness = 25,
+            denoise = 10,
+            isBuiltIn = true
+        ),
+        PresetItem(
+            id = "builtin_hq_tiktok",
+            name = "TikTok 60FPS Studio",
+            category = "social",
+            resolution = "1080p",
+            fps = 60,
+            codec = "H.264",
+            bitrateMode = "Custom",
+            bitrateKbps = 12500,
+            containerFormat = "MP4",
+            crf = 18,
+            encoderPreset = "medium",
+            brightness = 14,
+            contrast = 20,
+            saturation = 10,
+            temperature = 0,
+            sharpness = 24,
+            denoise = 8,
+            isBuiltIn = true
+        ),
+        PresetItem(
+            id = "builtin_hq_reels",
+            name = "Instagram Reels 60FPS",
+            category = "social",
+            resolution = "1080p",
+            fps = 60,
+            codec = "H.264",
+            bitrateMode = "Custom",
+            bitrateKbps = 14000,
+            containerFormat = "MP4",
+            crf = 18,
+            encoderPreset = "medium",
+            brightness = 12,
+            contrast = 18,
+            saturation = 10,
+            temperature = 2,
+            sharpness = 22,
+            denoise = 8,
+            isBuiltIn = true
+        ),
+        PresetItem(
+            id = "builtin_hq_shorts",
+            name = "YouTube Shorts 60FPS",
+            category = "social",
+            resolution = "1080p",
+            fps = 60,
+            codec = "H.264",
+            bitrateMode = "Custom",
+            bitrateKbps = 18000,
+            containerFormat = "MP4",
+            crf = 17,
+            encoderPreset = "medium",
+            brightness = 10,
+            contrast = 15,
+            saturation = 8,
+            temperature = 0,
+            sharpness = 20,
             denoise = 5,
             isBuiltIn = true
         )
