@@ -3,13 +3,20 @@ package com.example.domain.model
 enum class ThemePalette(val displayName: String, val isDarkPalette: Boolean = false) {
     WarmIvory("Warm Ivory (Default)", false),
     SoftMint("Soft Mint", false),
-    Cream("Cream", false),
-    Lavender("Lavender", false),
-    Sky("Sky", false),
-    Peach("Peach", false),
-    Sand("Sand", false),
+    EmeraldMist("Emerald Mist", false),
+    Cream("Warm Cream", false),
+    Lavender("Royal Lavender", false),
+    Sky("Nordic Sky", false),
+    Peach("Sunset Peach", false),
+    RoseQuartz("Rose Quartz", false),
+    Sand("Desert Sand", false),
+    MatchaZen("Matcha Zen", false),
+    ArcticPearl("Arctic Pearl", false),
     Graphite("Graphite Dark", true),
-    Midnight("Midnight Dark", true)
+    Midnight("Midnight Slate", true),
+    ObsidianMint("Obsidian Emerald", true),
+    CyberViolet("Cyber Violet Dark", true),
+    MochaEspresso("Mocha Espresso Dark", true)
 }
 
 enum class ThemeMode(val displayName: String) {

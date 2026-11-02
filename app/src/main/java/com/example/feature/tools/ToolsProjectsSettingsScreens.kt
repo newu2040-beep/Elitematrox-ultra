@@ -25,13 +25,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.VideoFile
@@ -732,6 +737,10 @@ fun SettingsScreen(
     userName: String?,
     isGuestMode: Boolean,
     preferences: AppPreferencesState,
+    hasNotificationPermission: Boolean = true,
+    hasGalleryStorageAccess: Boolean = true,
+    onRequestAllPermissions: () -> Unit = {},
+    onOpenFullFilePicker: () -> Unit = {},
     onSelectPalette: (ThemePalette) -> Unit,
     onSelectThemeMode: (ThemeMode) -> Unit,
     onSelectRoute: (ExecutionRoute) -> Unit,
@@ -797,7 +806,127 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(18.dp))
 
-        // 2. Theme Mode Selector (Light, Dark, Follow System)
+        // 2. Permissions, Gallery Auto-Save & Full Files Access Card
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Outlined.Security,
+                contentDescription = null,
+                tint = neu.accentPrimary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Permissions, Gallery & Files Access",
+                color = neu.textPrimary,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+            )
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        NeumorphicCard(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = 22.dp,
+            contentPadding = PaddingValues(16.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Notifications Permission",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = neu.textPrimary
+                        )
+                        Text(
+                            text = "Real-time completion alerts when video exports finish",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+                            color = neu.textSecondary
+                        )
+                    }
+                    Text(
+                        text = if (hasNotificationPermission) "Granted" else "Tap Below",
+                        color = if (hasNotificationPermission) neu.accentPrimary else neu.thermoOrange,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = neu.divider)
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Gallery Auto-Save & Media Storage",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = neu.textPrimary
+                        )
+                        Text(
+                            text = "Automatically saves processed videos to Movies/EliteMatrix in Gallery",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+                            color = neu.textSecondary
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = if (hasGalleryStorageAccess) neu.accentPrimary else neu.thermoOrange,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (hasGalleryStorageAccess) "Active" else "Request",
+                            color = if (hasGalleryStorageAccess) neu.accentPrimary else neu.thermoOrange,
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                EmeraldPillButton(
+                    text = "Grant All Permissions (Notifications & Gallery)",
+                    testTag = "grant_all_permissions_button",
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Outlined.NotificationsActive,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    onClick = onRequestAllPermissions
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                NeumorphicPillButton(
+                    text = "Browse All Video Files (Full Storage Picker)",
+                    height = 44.dp,
+                    testTag = "open_full_file_picker_button",
+                    leadingContent = {
+                        Icon(
+                            imageVector = Icons.Outlined.FolderOpen,
+                            contentDescription = null,
+                            tint = neu.accentPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    onClick = onOpenFullFilePicker
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        // 3. Theme Mode Selector (Light, Dark, Follow System)
         Text(
             text = "Appearance Mode",
             color = neu.textPrimary,
@@ -819,7 +948,7 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(18.dp))
 
-        // 3. Neumorphic Color Palettes (Warm Ivory, Soft Mint, Cream, Lavender, Sky, Peach, Sand, Graphite, Midnight)
+        // 4. Neumorphic Color Palettes (16 Custom Light & Dark Themes)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = Icons.Outlined.Palette,
@@ -829,7 +958,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Neumorphic Color Themes",
+                text = "Neumorphic Color Themes (${ThemePalette.entries.size})",
                 color = neu.textPrimary,
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
             )
@@ -872,7 +1001,7 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(18.dp))
 
-        // 4. Local / Cloud Routing & Privacy
+        // 5. Local / Cloud Routing & Privacy
         Text(
             text = "Processing Route (Local / Cloud Run)",
             color = neu.textPrimary,
@@ -937,5 +1066,55 @@ fun SettingsScreen(
         }
 
         Spacer(modifier = Modifier.height(20.dp))
+
+        // 6. Developer Credit Card ("Made with ❤️ by Rahul Shah")
+        NeumorphicCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("developer_credit_card"),
+            cornerRadius = 22.dp,
+            contentPadding = PaddingValues(18.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "Made with ",
+                        color = neu.textPrimary,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.5.sp
+                        )
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.Favorite,
+                        contentDescription = "Love",
+                        tint = Color(0xFFE53935),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = " by Rahul Shah",
+                        color = neu.accentPrimary,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 15.5.sp
+                        )
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "ELITE MATRIX • HQ Video Enhancer & Real-Time Media Studio",
+                    color = neu.textSecondary,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
     }
 }

@@ -30,11 +30,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Forward5
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.Replay5
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material.icons.outlined.Eco
 import androidx.compose.material.icons.outlined.FileUpload
@@ -43,6 +50,7 @@ import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Thermostat
 import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material.icons.outlined.WbSunny
@@ -63,7 +71,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -81,12 +92,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.example.core.media.ProcessedVideoOutput
 import com.example.core.media.VideoProcessingEngine
+import kotlinx.coroutines.delay
 import com.example.domain.model.EnhancementAdjustments
 import com.example.domain.model.ExportConfiguration
 import com.example.domain.model.SocialMediaPreset
@@ -1203,6 +1218,23 @@ fun ProcessingCompleteScreen(
                                 )
                             )
                         }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                tint = neu.accentPrimary,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Auto-saved to Gallery (${completedOutput?.galleryRelativePath ?: "Movies/EliteMatrix"})",
+                                color = neu.textSecondary,
+                                style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
@@ -1328,29 +1360,369 @@ fun VideoPlaybackModalDialog(
     uriString: String,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close Player")
+    val context = LocalContext.current
+    val neu = LocalNeumorphicColors.current
+
+    var isPlaying by remember { mutableStateOf(true) }
+    var isStopped by remember { mutableStateOf(false) }
+    var isMuted by remember { mutableStateOf(false) }
+    var isLooping by remember { mutableStateOf(true) }
+    var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
+    var currentPosMs by remember { mutableLongStateOf(0L) }
+    var durationMs by remember { mutableLongStateOf(1L) }
+    var isUserScrubbing by remember { mutableStateOf(false) }
+    var scrubFraction by remember { mutableFloatStateOf(0f) }
+
+    val exoPlayer = remember(uriString) {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(Uri.parse(uriString)))
+            repeatMode = Player.REPEAT_MODE_ONE
+            prepare()
+            playWhenReady = true
+            addListener(object : Player.Listener {
+                override fun onIsPlayingChanged(playing: Boolean) {
+                    isPlaying = playing
+                }
+
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (duration > 0) {
+                        durationMs = duration
+                    }
+                    if (playbackState == Player.STATE_ENDED && repeatMode == Player.REPEAT_MODE_OFF) {
+                        isPlaying = false
+                    }
+                }
+            })
+        }
+    }
+
+    // Real-time progress ticker updating every 80ms
+    LaunchedEffect(exoPlayer) {
+        while (true) {
+            if (!isUserScrubbing) {
+                currentPosMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+                val dur = exoPlayer.duration
+                if (dur > 0L) {
+                    durationMs = dur
+                }
             }
-        },
-        title = { Text("Video Player") },
-        text = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(240.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color.Black)
-            ) {
-                InlineExoPlayerView(
-                    uriString = uriString,
-                    modifier = Modifier.fillMaxSize()
+            isPlaying = exoPlayer.isPlaying
+            delay(80L)
+        }
+    }
+
+    DisposableEffect(exoPlayer) {
+        onDispose {
+            exoPlayer.release()
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        NeumorphicCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            cornerRadius = 26.dp,
+            contentPadding = PaddingValues(18.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Real-Time Video Player",
+                            color = neu.textPrimary,
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp
+                            )
+                        )
+                        Text(
+                            text = "Speed: ${playbackSpeed}x • ${if (isPlaying) "Playing" else if (isStopped) "Stopped" else "Paused"}",
+                            color = neu.accentPrimary,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                    TextButton(onClick = onDismiss) {
+                        Text("Done", color = neu.accentPrimary, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Video Surface
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(230.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color.Black)
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            PlayerView(ctx).apply {
+                                player = exoPlayer
+                                useController = false
+                            }
+                        },
+                        update = { view ->
+                            view.player = exoPlayer
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Live Seekbar + Time Labels (MM:SS / MM:SS)
+                val safeDuration = durationMs.coerceAtLeast(1L)
+                val progressValue = if (isUserScrubbing) {
+                    scrubFraction
+                } else {
+                    (currentPosMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
+                }
+
+                Slider(
+                    value = progressValue,
+                    onValueChange = { frac ->
+                        isUserScrubbing = true
+                        scrubFraction = frac
+                        currentPosMs = (frac * safeDuration).toLong()
+                    },
+                    onValueChangeFinished = {
+                        val targetMs = (scrubFraction * safeDuration).toLong()
+                        exoPlayer.seekTo(targetMs)
+                        isUserScrubbing = false
+                    },
+                    colors = SliderDefaults.colors(
+                        thumbColor = neu.accentPrimary,
+                        activeTrackColor = neu.accentPrimary,
+                        inactiveTrackColor = neu.surfaceInset
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("video_player_seek_slider")
                 )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = formatTimestampMs(currentPosMs),
+                        color = neu.textPrimary,
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
+                    )
+                    Text(
+                        text = formatTimestampMs(safeDuration),
+                        color = neu.textSecondary,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Primary Transport Controls: Skip -5s | Play/Pause/Resume | Stop | Skip +5s | Mute | Loop
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Rewind 5s
+                    IconButton(
+                        onClick = {
+                            val target = (exoPlayer.currentPosition - 5000L).coerceAtLeast(0L)
+                            exoPlayer.seekTo(target)
+                            currentPosMs = target
+                        },
+                        modifier = Modifier
+                            .size(44.dp)
+                            .neumorphicRaised(cornerRadius = 22.dp, elevation = 3.dp)
+                            .testTag("player_rewind_5s_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Replay5,
+                            contentDescription = "Rewind 5 seconds",
+                            tint = neu.textPrimary
+                        )
+                    }
+
+                    // Play / Pause / Resume Button
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(neu.accentPrimary, neu.accentSecondary)
+                                )
+                            )
+                            .clickable {
+                                if (exoPlayer.isPlaying) {
+                                    exoPlayer.pause()
+                                    isPlaying = false
+                                } else {
+                                    if (isStopped || exoPlayer.playbackState == Player.STATE_IDLE) {
+                                        exoPlayer.prepare()
+                                    }
+                                    if (exoPlayer.playbackState == Player.STATE_ENDED) {
+                                        exoPlayer.seekTo(0L)
+                                    }
+                                    isStopped = false
+                                    exoPlayer.play()
+                                    isPlaying = true
+                                }
+                            }
+                            .testTag("player_play_pause_resume_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play or Resume",
+                            tint = Color.White,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+
+                    // Stop Button (Pause + Reset to 00:00)
+                    IconButton(
+                        onClick = {
+                            exoPlayer.pause()
+                            exoPlayer.seekTo(0L)
+                            currentPosMs = 0L
+                            isPlaying = false
+                            isStopped = true
+                        },
+                        modifier = Modifier
+                            .size(44.dp)
+                            .neumorphicRaised(cornerRadius = 22.dp, elevation = 3.dp)
+                            .testTag("player_stop_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Stop,
+                            contentDescription = "Stop Video",
+                            tint = neu.textPrimary
+                        )
+                    }
+
+                    // Forward 5s
+                    IconButton(
+                        onClick = {
+                            val dur = exoPlayer.duration.coerceAtLeast(1000L)
+                            val target = (exoPlayer.currentPosition + 5000L).coerceAtMost(dur)
+                            exoPlayer.seekTo(target)
+                            currentPosMs = target
+                        },
+                        modifier = Modifier
+                            .size(44.dp)
+                            .neumorphicRaised(cornerRadius = 22.dp, elevation = 3.dp)
+                            .testTag("player_forward_5s_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Forward5,
+                            contentDescription = "Forward 5 seconds",
+                            tint = neu.textPrimary
+                        )
+                    }
+
+                    // Mute / Unmute
+                    IconButton(
+                        onClick = {
+                            isMuted = !isMuted
+                            exoPlayer.volume = if (isMuted) 0f else 1f
+                        },
+                        modifier = Modifier
+                            .size(44.dp)
+                            .neumorphicRaised(cornerRadius = 22.dp, elevation = 3.dp)
+                            .testTag("player_mute_button")
+                    ) {
+                        Icon(
+                            imageVector = if (isMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+                            contentDescription = if (isMuted) "Unmute" else "Mute",
+                            tint = if (isMuted) neu.thermoOrange else neu.textPrimary
+                        )
+                    }
+
+                    // Loop Toggle
+                    IconButton(
+                        onClick = {
+                            isLooping = !isLooping
+                            exoPlayer.repeatMode = if (isLooping) {
+                                Player.REPEAT_MODE_ONE
+                            } else {
+                                Player.REPEAT_MODE_OFF
+                            }
+                        },
+                        modifier = Modifier
+                            .size(44.dp)
+                            .neumorphicRaised(cornerRadius = 22.dp, elevation = 3.dp)
+                            .testTag("player_loop_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Repeat,
+                            contentDescription = "Toggle Loop",
+                            tint = if (isLooping) neu.accentPrimary else neu.textSecondary
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Playback Speed Selector Row (0.5x, 0.75x, 1.0x, 1.25x, 1.5x, 2.0x)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Speed,
+                        contentDescription = null,
+                        tint = neu.accentPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Playback Speed",
+                        color = neu.textPrimary,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { speed ->
+                        val label = if (speed == 1.0f) "1x" else "${speed}x"
+                        NeumorphicChoicePill(
+                            label = label,
+                            selected = playbackSpeed == speed,
+                            testTag = "speed_pill_$label",
+                            onClick = {
+                                playbackSpeed = speed
+                                exoPlayer.setPlaybackSpeed(speed)
+                            }
+                        )
+                    }
+                }
             }
         }
-    )
+    }
+}
+
+private fun formatTimestampMs(ms: Long): String {
+    val totalSeconds = (ms / 1000L).coerceAtLeast(0L)
+    val minutes = totalSeconds / 60L
+    val seconds = totalSeconds % 60L
+    return "%02d:%02d".format(minutes, seconds)
 }
 
 @Composable

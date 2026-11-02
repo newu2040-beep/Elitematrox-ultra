@@ -1,6 +1,9 @@
 package com.example
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -23,7 +26,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -47,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.credentials.CredentialManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -195,7 +198,69 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
 
     var pendingDestinationAfterImport by remember { mutableStateOf<PrimaryScreen?>(null) }
 
-    // Zero-permission Android Photo Picker for selecting videos
+    var hasNotificationPermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+            } else {
+                true
+            }
+        )
+    }
+
+    var hasGalleryStorageAccess by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ) == PackageManager.PERMISSION_GRANTED
+            } else {
+                true
+            }
+        )
+    }
+
+    val permissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { grantResults ->
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            grantResults[Manifest.permission.POST_NOTIFICATIONS]?.let {
+                hasNotificationPermission = it
+            }
+        }
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            grantResults[Manifest.permission.WRITE_EXTERNAL_STORAGE]?.let {
+                hasGalleryStorageAccess = it
+            }
+        }
+    }
+
+    fun requestAllRuntimePermissions() {
+        val permsToRequest = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            permsToRequest.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+        if (permsToRequest.isNotEmpty()) {
+            permissionsLauncher.launch(permsToRequest.toTypedArray())
+        }
+    }
+
+    // Request permissions on startup and load real H.264 sample video if none is loaded yet
+    LaunchedEffect(Unit) {
+        requestAllRuntimePermissions()
+        if (editorState.selectedVideo == null) {
+            viewModel.loadOrGenerateSampleVideo(context, targetScreen = null)
+        }
+    }
+
+    // Android Photo Picker for Gallery videos
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -212,11 +277,25 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
         pendingDestinationAfterImport = null
     }
 
-    // Ensure a real H.264 video clip (Nature_Video.mp4) is ready on first launch if none is loaded yet
-    LaunchedEffect(Unit) {
-        if (editorState.selectedVideo == null) {
-            viewModel.loadOrGenerateSampleVideo(context, targetScreen = null)
+    // Full Storage / Files Document Picker for browsing any video file across device folders/drives
+    val openDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
+            viewModel.importVideoUri(
+                context,
+                uri,
+                pendingDestinationAfterImport ?: PrimaryScreen.EnhanceVideo
+            )
         }
+        pendingDestinationAfterImport = null
     }
 
     val showBottomBar = editorState.activeScreen in listOf(
@@ -517,6 +596,15 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
                                 userName = currentUser?.displayName,
                                 isGuestMode = isGuestMode,
                                 preferences = prefsState,
+                                hasNotificationPermission = hasNotificationPermission,
+                                hasGalleryStorageAccess = hasGalleryStorageAccess,
+                                onRequestAllPermissions = {
+                                    requestAllRuntimePermissions()
+                                },
+                                onOpenFullFilePicker = {
+                                    pendingDestinationAfterImport = PrimaryScreen.EnhanceVideo
+                                    openDocumentLauncher.launch(arrayOf("video/*"))
+                                },
                                 onSelectPalette = { palette ->
                                     viewModel.setThemePalette(palette)
                                 },
@@ -531,6 +619,9 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
                                 },
                                 onToggleNotifications = { enabled ->
                                     viewModel.setNotificationsEnabled(enabled)
+                                    if (enabled) {
+                                        requestAllRuntimePermissions()
+                                    }
                                 },
                                 onSignOutOrSignInWithGoogle = onSignOutOrExitGuest,
                                 onBackToHome = {

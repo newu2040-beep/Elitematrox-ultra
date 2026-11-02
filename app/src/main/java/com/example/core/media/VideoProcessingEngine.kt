@@ -1,6 +1,11 @@
 package com.example.core.media
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.ContentValues
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
@@ -9,11 +14,18 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
+import android.media.MediaScannerConnection
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.annotation.OptIn
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
@@ -33,10 +45,12 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.VideoEncoderSettings
+import com.example.R
 import com.example.domain.model.EnhancementAdjustments
 import com.example.domain.model.ExportConfiguration
 import com.example.domain.model.VideoMetadata
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import kotlin.coroutines.resume
@@ -62,7 +76,9 @@ data class ProcessedVideoOutput(
     val codec: String,
     val containerFormat: String,
     val durationMs: Long,
-    val ffmpegCommandUsed: String
+    val ffmpegCommandUsed: String,
+    val galleryUri: Uri? = null,
+    val galleryRelativePath: String = "Movies/EliteMatrix"
 )
 
 object VideoProcessingEngine {
@@ -612,12 +628,22 @@ object VideoProcessingEngine {
             val origSize = sourceMetadata.sizeBytes.coerceAtLeast(1024L)
             val savedPct = (((origSize - actualOutSize).toDouble() / origSize.toDouble()) * 100.0).roundToInt()
 
+            val finalDisplayFileName = sourceMetadata.fileName.substringBeforeLast('.') + "_EliteMatrix." + ext
+
+            // Automatically save processed video into Device Gallery (Movies/EliteMatrix)
+            val savedGalleryUri = saveVideoToGallery(
+                context = context,
+                videoFile = outputFile,
+                displayFileName = finalDisplayFileName,
+                containerFormat = exportConfig.containerFormat
+            ).getOrNull()
+
             onProgress(100)
 
-            ProcessedVideoOutput(
+            val outputObj = ProcessedVideoOutput(
                 outputFile = outputFile,
                 outputUri = outputFile.toUri(),
-                fileName = sourceMetadata.fileName.substringBeforeLast('.') + "." + ext,
+                fileName = finalDisplayFileName,
                 originalSizeBytes = origSize,
                 outputSizeBytes = actualOutSize,
                 savedPercent = savedPct,
@@ -628,8 +654,121 @@ object VideoProcessingEngine {
                 codec = exportConfig.codec,
                 containerFormat = exportConfig.containerFormat,
                 durationMs = outInspect?.durationMs ?: sourceMetadata.durationMs,
-                ffmpegCommandUsed = ffmpegCommandString
+                ffmpegCommandUsed = ffmpegCommandString,
+                galleryUri = savedGalleryUri,
+                galleryRelativePath = "Movies/EliteMatrix/$finalDisplayFileName"
             )
+
+            postCompletionNotification(context, outputObj)
+            outputObj
+        }
+    }
+
+    /**
+     * Automatically saves an exported video file into the public Android Gallery (`Movies/EliteMatrix`)
+     * using MediaStore.Video.Media on Android 10+ and MediaScannerConnection on older versions.
+     */
+    suspend fun saveVideoToGallery(
+        context: Context,
+        videoFile: File,
+        displayFileName: String,
+        containerFormat: String = "MP4"
+    ): Result<Uri> = withContext(Dispatchers.IO) {
+        runCatching {
+            require(videoFile.exists() && videoFile.length() > 0L) {
+                "Source video file does not exist or is empty"
+            }
+
+            val mimeType = when (containerFormat.uppercase()) {
+                "MOV" -> "video/quicktime"
+                "MKV" -> "video/x-matroska"
+                else -> "video/mp4"
+            }
+
+            val resolver = context.contentResolver
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, displayFileName)
+                    put(MediaStore.Video.Media.TITLE, displayFileName.substringBeforeLast('.'))
+                    put(MediaStore.Video.Media.MIME_TYPE, mimeType)
+                    put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/EliteMatrix")
+                    put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000L)
+                    put(MediaStore.Video.Media.DATE_TAKEN, System.currentTimeMillis())
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+
+                val collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                val itemUri = resolver.insert(collection, values)
+                    ?: throw IllegalStateException("Failed to create MediaStore video entry")
+
+                resolver.openOutputStream(itemUri)?.use { outStream ->
+                    FileInputStream(videoFile).use { inStream ->
+                        inStream.copyTo(outStream, bufferSize = 64 * 1024)
+                    }
+                } ?: throw IllegalStateException("Failed to open output stream for Gallery URI")
+
+                val publishValues = ContentValues().apply {
+                    put(MediaStore.Video.Media.IS_PENDING, 0)
+                }
+                resolver.update(itemUri, publishValues, null, null)
+                itemUri
+            } else {
+                val moviesDir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                    "EliteMatrix"
+                ).apply { mkdirs() }
+                val destFile = File(moviesDir, displayFileName)
+                videoFile.copyTo(destFile, overwrite = true)
+                MediaScannerConnection.scanFile(
+                    context,
+                    arrayOf(destFile.absolutePath),
+                    arrayOf(mimeType),
+                    null
+                )
+                destFile.toUri()
+            }
+        }
+    }
+
+    /**
+     * Posts a real system notification when video processing completes and is saved to Gallery.
+     */
+    fun postCompletionNotification(context: Context, output: ProcessedVideoOutput) {
+        try {
+            val channelId = "elite_matrix_exports_channel"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    channelId,
+                    "Video Export & Processing",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Real-time notifications when video enhancement and exports finish"
+                }
+                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                manager?.createNotificationChannel(channel)
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val hasPerm = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+                if (!hasPerm) return
+            }
+
+            val notification = NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle("Processing Complete • Saved to Gallery")
+                .setContentText("${output.fileName} (${output.resolutionLabel} • ${output.fps} FPS) saved to Movies/EliteMatrix")
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .build()
+
+            NotificationManagerCompat.from(context).notify(
+                (System.currentTimeMillis() % 100000).toInt(),
+                notification
+            )
+        } catch (_: Exception) {
         }
     }
 
