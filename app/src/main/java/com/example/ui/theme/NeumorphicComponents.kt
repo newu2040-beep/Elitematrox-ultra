@@ -6,7 +6,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -15,6 +14,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,6 +32,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,14 +50,145 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.domain.model.AspectRatioMode
 import com.example.domain.model.EnhancementAdjustments
+import com.example.domain.model.ProcessingPerformanceMode
+
+enum class DeviceSizeClass {
+    CompactSmall,   // < 360dp width or < 640dp height
+    StandardPhone,  // 360..411dp width
+    LargePhone,     // 412..599dp width
+    ExpandedTablet  // >= 600dp width
+}
+
+@Immutable
+data class ResponsiveLayoutMetrics(
+    val sizeClass: DeviceSizeClass,
+    val screenWidthDp: Int,
+    val screenHeightDp: Int,
+    val densityScale: Float,
+    val fontScale: Float,
+    val horizontalPadding: Dp,
+    val verticalPadding: Dp,
+    val sectionSpacing: Dp,
+    val itemSpacing: Dp,
+    val cardCornerRadius: Dp,
+    val cardPadding: Dp,
+    val heroBannerHeight: Dp,
+    val actionTileHeight: Dp,
+    val videoPreviewHeight: Dp,
+    val pillButtonHeight: Dp,
+    val choicePillHeight: Dp
+) {
+    val compactSpacing: Dp
+        get() = itemSpacing
+}
+
+/**
+ * Automatically detects the device's screen dimensions, pixel density, font scale, and display size class
+ * to eliminate excessive whitespace, oversized cards, and cramped controls on all phone & tablet screens.
+ */
+@Composable
+fun rememberResponsiveMetrics(): ResponsiveLayoutMetrics {
+    val config = LocalConfiguration.current
+    val density = LocalDensity.current
+    return remember(config.screenWidthDp, config.screenHeightDp, density.density, density.fontScale) {
+        val w = config.screenWidthDp
+        val h = config.screenHeightDp
+        val sizeClass = when {
+            w >= 600 -> DeviceSizeClass.ExpandedTablet
+            w < 360 || h < 660 -> DeviceSizeClass.CompactSmall
+            w >= 412 -> DeviceSizeClass.LargePhone
+            else -> DeviceSizeClass.StandardPhone
+        }
+
+        when (sizeClass) {
+            DeviceSizeClass.CompactSmall -> ResponsiveLayoutMetrics(
+                sizeClass = sizeClass,
+                screenWidthDp = w,
+                screenHeightDp = h,
+                densityScale = density.density,
+                fontScale = density.fontScale,
+                horizontalPadding = 14.dp,
+                verticalPadding = 6.dp,
+                sectionSpacing = 10.dp,
+                itemSpacing = 8.dp,
+                cardCornerRadius = 18.dp,
+                cardPadding = 12.dp,
+                heroBannerHeight = 104.dp,
+                actionTileHeight = 92.dp,
+                videoPreviewHeight = 184.dp,
+                pillButtonHeight = 46.dp,
+                choicePillHeight = 36.dp
+            )
+            DeviceSizeClass.StandardPhone -> ResponsiveLayoutMetrics(
+                sizeClass = sizeClass,
+                screenWidthDp = w,
+                screenHeightDp = h,
+                densityScale = density.density,
+                fontScale = density.fontScale,
+                horizontalPadding = 16.dp,
+                verticalPadding = 8.dp,
+                sectionSpacing = 12.dp,
+                itemSpacing = 10.dp,
+                cardCornerRadius = 20.dp,
+                cardPadding = 14.dp,
+                heroBannerHeight = 114.dp,
+                actionTileHeight = 100.dp,
+                videoPreviewHeight = 204.dp,
+                pillButtonHeight = 48.dp,
+                choicePillHeight = 38.dp
+            )
+            DeviceSizeClass.LargePhone -> ResponsiveLayoutMetrics(
+                sizeClass = sizeClass,
+                screenWidthDp = w,
+                screenHeightDp = h,
+                densityScale = density.density,
+                fontScale = density.fontScale,
+                horizontalPadding = 18.dp,
+                verticalPadding = 8.dp,
+                sectionSpacing = 14.dp,
+                itemSpacing = 10.dp,
+                cardCornerRadius = 20.dp,
+                cardPadding = 14.dp,
+                heroBannerHeight = 118.dp,
+                actionTileHeight = 104.dp,
+                videoPreviewHeight = 216.dp,
+                pillButtonHeight = 50.dp,
+                choicePillHeight = 40.dp
+            )
+            DeviceSizeClass.ExpandedTablet -> ResponsiveLayoutMetrics(
+                sizeClass = sizeClass,
+                screenWidthDp = w,
+                screenHeightDp = h,
+                densityScale = density.density,
+                fontScale = density.fontScale,
+                horizontalPadding = 22.dp,
+                verticalPadding = 10.dp,
+                sectionSpacing = 16.dp,
+                itemSpacing = 12.dp,
+                cardCornerRadius = 22.dp,
+                cardPadding = 16.dp,
+                heroBannerHeight = 126.dp,
+                actionTileHeight = 110.dp,
+                videoPreviewHeight = 240.dp,
+                pillButtonHeight = 52.dp,
+                choicePillHeight = 42.dp
+            )
+        }
+    }
+}
 
 /**
  * Soft modern neumorphic raised surface modifier:
@@ -64,7 +197,7 @@ import com.example.domain.model.EnhancementAdjustments
 @Composable
 fun Modifier.neumorphicRaised(
     cornerRadius: Dp = 20.dp,
-    elevation: Dp = 5.dp,
+    elevation: Dp = 4.dp,
     surfaceColor: Color? = null
 ): Modifier {
     val neu = LocalNeumorphicColors.current
@@ -80,14 +213,14 @@ fun Modifier.neumorphicRaised(
 
             // Outer soft dark shadow (bottom-right)
             drawRoundRect(
-                color = darkShadow.copy(alpha = if (neu.isDark) 0.55f else 0.42f),
-                topLeft = Offset(offsetPx * 0.9f, offsetPx * 1.05f),
+                color = darkShadow.copy(alpha = if (neu.isDark) 0.55f else 0.40f),
+                topLeft = Offset(offsetPx * 0.85f, offsetPx * 1.0f),
                 size = Size(size.width, size.height),
                 cornerRadius = CornerRadius(radiusPx, radiusPx)
             )
             drawRoundRect(
-                color = darkShadow.copy(alpha = if (neu.isDark) 0.30f else 0.22f),
-                topLeft = Offset(offsetPx * 1.5f, offsetPx * 1.7f),
+                color = darkShadow.copy(alpha = if (neu.isDark) 0.28f else 0.20f),
+                topLeft = Offset(offsetPx * 1.4f, offsetPx * 1.55f),
                 size = Size(size.width, size.height),
                 cornerRadius = CornerRadius(radiusPx + 2f, radiusPx + 2f)
             )
@@ -95,7 +228,7 @@ fun Modifier.neumorphicRaised(
             // Outer soft highlight (top-left)
             drawRoundRect(
                 color = lightShadow.copy(alpha = if (neu.isDark) 0.25f else 0.88f),
-                topLeft = Offset(-offsetPx * 0.75f, -offsetPx * 0.75f),
+                topLeft = Offset(-offsetPx * 0.7f, -offsetPx * 0.7f),
                 size = Size(size.width, size.height),
                 cornerRadius = CornerRadius(radiusPx, radiusPx)
             )
@@ -110,7 +243,7 @@ fun Modifier.neumorphicRaised(
  */
 @Composable
 fun Modifier.neumorphicInset(
-    cornerRadius: Dp = 16.dp
+    cornerRadius: Dp = 14.dp
 ): Modifier {
     val neu = LocalNeumorphicColors.current
     return this
@@ -131,9 +264,9 @@ fun Modifier.neumorphicInset(
 @Composable
 fun NeumorphicCard(
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = 22.dp,
-    elevation: Dp = 5.dp,
-    contentPadding: PaddingValues = PaddingValues(16.dp),
+    cornerRadius: Dp = 20.dp,
+    elevation: Dp = 4.dp,
+    contentPadding: PaddingValues = PaddingValues(14.dp),
     onClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
@@ -163,7 +296,8 @@ fun EmeraldPillButton(
     testTag: String = ""
 ) {
     val neu = LocalNeumorphicColors.current
-    val shape = RoundedCornerShape(28.dp)
+    val metrics = rememberResponsiveMetrics()
+    val shape = RoundedCornerShape(metrics.pillButtonHeight / 2)
     val gradient = Brush.horizontalGradient(
         colors = if (enabled) {
             listOf(
@@ -179,13 +313,13 @@ fun EmeraldPillButton(
         modifier = modifier
             .let { if (testTag.isNotBlank()) it.testTag(testTag) else it }
             .fillMaxWidth()
-            .height(52.dp)
+            .height(metrics.pillButtonHeight)
             .minimumInteractiveComponentSize()
             .drawBehind {
-                val r = 28.dp.toPx()
+                val r = (metrics.pillButtonHeight / 2).toPx()
                 drawRoundRect(
-                    color = neu.accentSecondary.copy(alpha = 0.30f),
-                    topLeft = Offset(0f, 5.dp.toPx()),
+                    color = neu.accentSecondary.copy(alpha = 0.28f),
+                    topLeft = Offset(0f, 4.dp.toPx()),
                     size = Size(size.width, size.height),
                     cornerRadius = CornerRadius(r, r)
                 )
@@ -198,14 +332,15 @@ fun EmeraldPillButton(
     ) {
         if (isLoading) {
             CircularProgressIndicator(
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(20.dp),
                 color = Color.White,
                 strokeWidth = 2.2.dp
             )
         } else {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.padding(horizontal = 14.dp)
             ) {
                 if (leadingIcon != null) {
                     leadingIcon()
@@ -214,9 +349,11 @@ fun EmeraldPillButton(
                 Text(
                     text = text,
                     color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp
+                        fontSize = 14.5.sp
                     )
                 )
             }
@@ -225,15 +362,14 @@ fun EmeraldPillButton(
 }
 
 /**
- * Raised Warm-Ivory Neumorphic Pill Button (used for "Continue with Google", "Continue with Email",
- * "Guest Mode", "Share", "Go to Projects", "Advanced Options").
+ * Raised Warm-Ivory Neumorphic Pill Button.
  */
 @Composable
 fun NeumorphicPillButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    height: Dp = 50.dp,
+    height: Dp = 46.dp,
     leadingContent: (@Composable () -> Unit)? = null,
     trailingContent: (@Composable () -> Unit)? = null,
     enabled: Boolean = true,
@@ -247,14 +383,14 @@ fun NeumorphicPillButton(
             .fillMaxWidth()
             .height(height)
             .minimumInteractiveComponentSize()
-            .neumorphicRaised(cornerRadius = height / 2, elevation = 4.dp)
+            .neumorphicRaised(cornerRadius = height / 2, elevation = 3.5.dp)
             .clickable(enabled = enabled && !isLoading, onClick = onClick)
-            .padding(horizontal = 18.dp),
+            .padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center
     ) {
         if (isLoading) {
             CircularProgressIndicator(
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(20.dp),
                 color = neu.accentPrimary,
                 strokeWidth = 2.2.dp
             )
@@ -265,14 +401,16 @@ fun NeumorphicPillButton(
             ) {
                 if (leadingContent != null) {
                     leadingContent()
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                 }
                 Text(
                     text = text,
                     color = neu.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp
+                        fontSize = 13.5.sp
                     )
                 )
                 if (trailingContent != null) {
@@ -296,18 +434,20 @@ fun RowScope.NeumorphicChoicePill(
     testTag: String = ""
 ) {
     val neu = LocalNeumorphicColors.current
-    val shape = RoundedCornerShape(22.dp)
+    val metrics = rememberResponsiveMetrics()
+    val pillH = metrics.choicePillHeight
+    val shape = RoundedCornerShape(pillH / 2)
 
     val boxMod = if (selected) {
         modifier
             .weight(1f)
             .let { if (testTag.isNotBlank()) it.testTag(testTag) else it }
-            .height(42.dp)
+            .height(pillH)
             .drawBehind {
-                val r = 22.dp.toPx()
+                val r = (pillH / 2).toPx()
                 drawRoundRect(
-                    color = neu.accentSecondary.copy(alpha = 0.28f),
-                    topLeft = Offset(0f, 3.dp.toPx()),
+                    color = neu.accentSecondary.copy(alpha = 0.25f),
+                    topLeft = Offset(0f, 2.5.dp.toPx()),
                     size = Size(size.width, size.height),
                     cornerRadius = CornerRadius(r, r)
                 )
@@ -324,23 +464,92 @@ fun RowScope.NeumorphicChoicePill(
         modifier
             .weight(1f)
             .let { if (testTag.isNotBlank()) it.testTag(testTag) else it }
-            .height(42.dp)
-            .neumorphicRaised(cornerRadius = 22.dp, elevation = 3.dp)
+            .height(pillH)
+            .neumorphicRaised(cornerRadius = pillH / 2, elevation = 2.5.dp)
             .clickable(onClick = onClick)
     }
 
     Box(
-        modifier = boxMod,
+        modifier = boxMod.padding(horizontal = 4.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = label,
             color = if (selected) Color.White else neu.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.labelLarge.copy(
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
-                fontSize = 13.sp
+                fontSize = 12.5.sp
             )
         )
+    }
+}
+
+/**
+ * Three-Mode Processing Performance Selector (LITE • ELITE • MAX) with real pipeline explanations.
+ */
+@Composable
+fun ProcessingPerformanceModeSelector(
+    selectedMode: ProcessingPerformanceMode,
+    recommendedMode: ProcessingPerformanceMode = ProcessingPerformanceMode.Elite,
+    onSelectMode: (ProcessingPerformanceMode) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val neu = LocalNeumorphicColors.current
+    NeumorphicCard(
+        modifier = modifier.fillMaxWidth(),
+        cornerRadius = 18.dp,
+        contentPadding = PaddingValues(12.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Processing Performance Mode",
+                    color = neu.textPrimary,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.5.sp
+                    )
+                )
+                Text(
+                    text = "Rec: ${recommendedMode.badge}",
+                    color = neu.accentPrimary,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ProcessingPerformanceMode.entries.forEach { mode ->
+                    NeumorphicChoicePill(
+                        label = mode.badge,
+                        selected = selectedMode == mode,
+                        testTag = "perf_mode_${mode.badge.lowercase()}",
+                        onClick = { onSelectMode(mode) }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = "${selectedMode.title}: ${selectedMode.subtitle}",
+                color = neu.textSecondary,
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp)
+            )
+        }
     }
 }
 
@@ -366,12 +575,12 @@ fun NeumorphicAdjustmentSliderRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(32.dp)
+                .size(30.dp)
                 .clip(CircleShape)
                 .background(iconTint.copy(alpha = 0.14f)),
             contentAlignment = Alignment.Center
@@ -380,10 +589,10 @@ fun NeumorphicAdjustmentSliderRow(
                 imageVector = icon,
                 contentDescription = label,
                 tint = iconTint,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(17.dp)
             )
         }
-        Spacer(modifier = Modifier.width(12.dp))
+        Spacer(modifier = Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -395,7 +604,7 @@ fun NeumorphicAdjustmentSliderRow(
                     color = neu.textPrimary,
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontWeight = FontWeight.Medium,
-                        fontSize = 13.5.sp
+                        fontSize = 13.sp
                     )
                 )
                 Text(
@@ -403,7 +612,7 @@ fun NeumorphicAdjustmentSliderRow(
                     color = neu.textPrimary,
                     style = MaterialTheme.typography.labelLarge.copy(
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.5.sp
+                        fontSize = 13.sp
                     )
                 )
             }
@@ -413,7 +622,7 @@ fun NeumorphicAdjustmentSliderRow(
                 valueRange = valueRange.first.toFloat()..valueRange.last.toFloat(),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(26.dp)
+                    .height(24.dp)
                     .let { if (testTag.isNotBlank()) it.testTag(testTag) else it },
                 colors = SliderDefaults.colors(
                     thumbColor = neu.surfaceRaised,
@@ -430,7 +639,7 @@ fun NeumorphicAdjustmentSliderRow(
  */
 @Composable
 fun EliteMatrixLogoMedallion(
-    size: Dp = 76.dp
+    size: Dp = 72.dp
 ) {
     val neu = LocalNeumorphicColors.current
     Box(
@@ -493,14 +702,13 @@ fun Neumorphic3DPlayHeroArtwork(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(145.dp),
+            .height(136.dp),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
 
-            // Soft diagonal mint wave sweep in background
             val wavePath = Path().apply {
                 moveTo(0f, h * 0.75f)
                 cubicTo(
@@ -527,7 +735,6 @@ fun Neumorphic3DPlayHeroArtwork(
                 )
             )
 
-            // Warm ivory pebble base shadow & body
             drawOval(
                 color = neu.shadowDark.copy(alpha = 0.45f),
                 topLeft = Offset(w * 0.25f, h * 0.26f),
@@ -541,7 +748,6 @@ fun Neumorphic3DPlayHeroArtwork(
                 size = Size(w * 0.46f, h * 0.58f)
             )
 
-            // 3D Mint Play Triangle Shadow
             val cx = w * 0.45f
             val cy = h * 0.49f
             val r = h * 0.27f
@@ -557,7 +763,6 @@ fun Neumorphic3DPlayHeroArtwork(
                 style = Stroke(width = 24f, cap = StrokeCap.Round, join = StrokeJoin.Round)
             )
 
-            // 3D Mint Play Triangle Extrusion (darker mint lower layer)
             val extrusionTriangle = Path().apply {
                 moveTo(cx - r * 0.55f, cy - r * 0.82f + 4f)
                 lineTo(cx + r * 0.92f, cy + 4f)
@@ -570,7 +775,6 @@ fun Neumorphic3DPlayHeroArtwork(
                 style = Stroke(width = 24f, cap = StrokeCap.Round, join = StrokeJoin.Round)
             )
 
-            // 3D Mint Play Triangle Top Highlight Face
             val topTriangle = Path().apply {
                 moveTo(cx - r * 0.55f, cy - r * 0.82f)
                 lineTo(cx + r * 0.92f, cy)
@@ -600,7 +804,6 @@ fun GoogleLogoIcon(modifier: Modifier = Modifier.size(20.dp)) {
         val arcSize = Size(s - stroke, s - stroke)
         val topLeft = Offset(inset, inset)
 
-        // Red top arc
         drawArc(
             color = Color(0xFFEA4335),
             startAngle = -145f,
@@ -610,7 +813,6 @@ fun GoogleLogoIcon(modifier: Modifier = Modifier.size(20.dp)) {
             size = arcSize,
             style = Stroke(width = stroke, cap = StrokeCap.Butt)
         )
-        // Yellow left arc
         drawArc(
             color = Color(0xFFFBBC05),
             startAngle = 145f,
@@ -620,7 +822,6 @@ fun GoogleLogoIcon(modifier: Modifier = Modifier.size(20.dp)) {
             size = arcSize,
             style = Stroke(width = stroke, cap = StrokeCap.Butt)
         )
-        // Green bottom arc
         drawArc(
             color = Color(0xFF34A853),
             startAngle = 45f,
@@ -630,7 +831,6 @@ fun GoogleLogoIcon(modifier: Modifier = Modifier.size(20.dp)) {
             size = arcSize,
             style = Stroke(width = stroke, cap = StrokeCap.Butt)
         )
-        // Blue right arc + horizontal bar
         drawArc(
             color = Color(0xFF4285F4),
             startAngle = -10f,
@@ -654,7 +854,7 @@ fun GoogleLogoIcon(modifier: Modifier = Modifier.size(20.dp)) {
  * TikTok / Social Media Preset Badge Icon (Screen 4).
  */
 @Composable
-fun SocialPresetBadgeIcon(presetName: String, modifier: Modifier = Modifier.size(38.dp)) {
+fun SocialPresetBadgeIcon(presetName: String, modifier: Modifier = Modifier.size(36.dp)) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(10.dp))
@@ -662,7 +862,7 @@ fun SocialPresetBadgeIcon(presetName: String, modifier: Modifier = Modifier.size
             .border(1.dp, Color(0xFFE5E2DA), RoundedCornerShape(10.dp)),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.size(22.dp)) {
+        Canvas(modifier = Modifier.size(20.dp)) {
             val w = size.width
             val h = size.height
             when {
@@ -724,7 +924,6 @@ fun SocialPresetBadgeIcon(presetName: String, modifier: Modifier = Modifier.size
                     )
                 }
                 else -> {
-                    // TikTok cyan + magenta + black musical note
                     val strokeW = w * 0.15f
                     drawCircle(
                         color = Color(0xFF25F4EE),
@@ -775,14 +974,13 @@ fun ProcessingCompleteCheckmarkHero(
 ) {
     val neu = LocalNeumorphicColors.current
     Box(
-        modifier = modifier.size(164.dp),
+        modifier = modifier.size(148.dp),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val c = center
             val maxR = size.minDimension / 2f
 
-            // 4 decorative floating mint dots matching the mockup
             drawCircle(
                 color = neu.accentPrimary.copy(alpha = 0.75f),
                 radius = 3.5.dp.toPx(),
@@ -804,7 +1002,6 @@ fun ProcessingCompleteCheckmarkHero(
                 center = Offset(c.x + maxR * 0.90f, c.y + maxR * 0.14f)
             )
 
-            // Outer soft neumorphic mint ring
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
@@ -818,7 +1015,6 @@ fun ProcessingCompleteCheckmarkHero(
                 center = c
             )
 
-            // Middle raised ring
             drawCircle(
                 color = neu.shadowDark.copy(alpha = 0.35f),
                 radius = maxR * 0.66f,
@@ -835,7 +1031,6 @@ fun ProcessingCompleteCheckmarkHero(
                 center = c
             )
 
-            // Inner emerald circle
             drawCircle(
                 brush = Brush.linearGradient(
                     colors = listOf(
@@ -847,7 +1042,6 @@ fun ProcessingCompleteCheckmarkHero(
                 center = c
             )
 
-            // Bold white checkmark
             val checkPath = Path().apply {
                 moveTo(c.x - maxR * 0.17f, c.y + maxR * 0.01f)
                 lineTo(c.x - maxR * 0.04f, c.y + maxR * 0.14f)
@@ -867,14 +1061,16 @@ fun ProcessingCompleteCheckmarkHero(
 }
 
 /**
- * Renders either the real extracted video frame bitmap (with live ColorMatrix filter applied)
- * or the signature Alpine Mountain Lake landscape matching the reference mockups.
+ * Renders the real extracted video frame bitmap with live ColorMatrix filter applied,
+ * preserving the exact portrait (9:16), landscape (16:9), square (1:1), or custom aspect ratio
+ * and live rotation without ever stretching or squashing the image.
  */
 @Composable
 fun VideoThumbnailPreview(
     thumbnailBitmap: Bitmap?,
     adjustments: EnhancementAdjustments = EnhancementAdjustments.Neutral,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    preserveAspectRatio: Boolean = true
 ) {
     val colorMatrix = remember(adjustments) {
         val profile = adjustments.cinematicProfile
@@ -904,13 +1100,61 @@ fun VideoThumbnailPreview(
     }
 
     if (thumbnailBitmap != null) {
-        Image(
-            bitmap = thumbnailBitmap.asImageBitmap(),
-            contentDescription = "Video frame preview",
-            contentScale = ContentScale.Crop,
-            colorFilter = ColorFilter.colorMatrix(colorMatrix),
-            modifier = modifier
-        )
+        val normRot = ((adjustments.rotationDegrees % 360) + 360) % 360
+        val bmpW = if (normRot == 90 || normRot == 270) thumbnailBitmap.height else thumbnailBitmap.width
+        val bmpH = if (normRot == 90 || normRot == 270) thumbnailBitmap.width else thumbnailBitmap.height
+        val naturalAspect = (bmpW.toFloat() / bmpH.coerceAtLeast(1).toFloat()).coerceIn(0.25f, 4.0f)
+        val targetAspect = adjustments.aspectRatioMode.ratioValue?.toFloat() ?: naturalAspect
+
+        Box(
+            modifier = modifier.background(Color(0xFF0E1612)),
+            contentAlignment = Alignment.Center
+        ) {
+            // Subtle ambient backdrop so portrait/ultrawide videos have a clean studio frame
+            Image(
+                bitmap = thumbnailBitmap.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                colorFilter = ColorFilter.colorMatrix(colorMatrix),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = 0.24f }
+            )
+
+            val scaleMode = if (!preserveAspectRatio ||
+                (adjustments.scaleToFillCrop && adjustments.aspectRatioMode != AspectRatioMode.Original)
+            ) {
+                ContentScale.Crop
+            } else {
+                ContentScale.Fit
+            }
+
+            val frameModifier = if (preserveAspectRatio && adjustments.aspectRatioMode != AspectRatioMode.Original) {
+                Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(targetAspect, matchHeightConstraintsFirst = targetAspect < 1.2f)
+            } else {
+                Modifier.fillMaxSize()
+            }
+
+            Image(
+                bitmap = thumbnailBitmap.asImageBitmap(),
+                contentDescription = "Video frame preview",
+                contentScale = scaleMode,
+                colorFilter = ColorFilter.colorMatrix(colorMatrix),
+                modifier = frameModifier.graphicsLayer {
+                    rotationZ = normRot.toFloat()
+                    if (normRot == 90 || normRot == 270) {
+                        val fitScale = minOf(
+                            thumbnailBitmap.height.toFloat() / thumbnailBitmap.width.coerceAtLeast(1).toFloat(),
+                            thumbnailBitmap.width.toFloat() / thumbnailBitmap.height.coerceAtLeast(1).toFloat()
+                        ).coerceIn(0.55f, 1f)
+                        scaleX = fitScale
+                        scaleY = fitScale
+                    }
+                }
+            )
+        }
     } else {
         // Painted Alpine Mountain Lake landscape matching the mockup's Nature_Video.mp4 preview
         val brightnessDelta = (adjustments.brightness / 100f) * 0.22f
@@ -928,7 +1172,6 @@ fun VideoThumbnailPreview(
                 )
             }
 
-            // Sky gradient
             drawRect(
                 brush = Brush.verticalGradient(
                     colors = listOf(
@@ -942,7 +1185,6 @@ fun VideoThumbnailPreview(
                 size = Size(w, h * 0.56f)
             )
 
-            // Sun glow on horizon
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
@@ -956,7 +1198,6 @@ fun VideoThumbnailPreview(
                 center = Offset(w * 0.48f, h * 0.42f)
             )
 
-            // Distant snow-capped mountains
             val farMountains = Path().apply {
                 moveTo(0f, h * 0.54f)
                 lineTo(w * 0.16f, h * 0.28f)
@@ -980,7 +1221,6 @@ fun VideoThumbnailPreview(
                 )
             )
 
-            // Pine forest slopes left & right
             val leftSlope = Path().apply {
                 moveTo(0f, h * 0.38f)
                 lineTo(w * 0.42f, h * 0.55f)
@@ -997,7 +1237,6 @@ fun VideoThumbnailPreview(
             }
             drawPath(rightSlope, color = tint(Color(0xFF366B45)))
 
-            // Alpine lake reflection
             drawRect(
                 brush = Brush.verticalGradient(
                     colors = listOf(
@@ -1012,7 +1251,6 @@ fun VideoThumbnailPreview(
                 size = Size(w, h * 0.46f)
             )
 
-            // Foreground pine silhouettes at bottom-left
             val fgPines = Path().apply {
                 moveTo(0f, h)
                 lineTo(0f, h * 0.68f)

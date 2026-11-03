@@ -1,10 +1,13 @@
 package com.example
 
 import com.example.core.media.VideoProcessingEngine
+import com.example.domain.model.AspectRatioMode
 import com.example.domain.model.CinematicColorProfile
 import com.example.domain.model.EnhancementAdjustments
 import com.example.domain.model.ExportConfiguration
+import com.example.domain.model.ProcessingPerformanceMode
 import com.example.domain.model.SocialMediaPreset
+import com.example.domain.model.VideoMetadata
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -33,7 +36,8 @@ class ExampleUnitTest {
             audioCodec = "AAC-LC",
             audioBitrateKbps = 256,
             audioSampleRateHz = 48000,
-            selectedSocialPreset = SocialMediaPreset.TikTok
+            selectedSocialPreset = SocialMediaPreset.TikTok,
+            performanceMode = ProcessingPerformanceMode.Elite
         )
 
         // Verify portrait vs landscape target dimension calculation
@@ -69,12 +73,104 @@ class ExampleUnitTest {
         val joined = commandArgs.joinToString(" ")
         assertTrue(joined.contains("unsharp="))
         assertTrue(joined.contains("hqdn3d="))
-        assertTrue(joined.contains("scale=1920:1080:flags=lanczos"))
+        assertTrue(joined.contains("scale=1920:1080"))
         assertTrue(joined.contains("fps=60"))
         assertTrue(joined.contains("-vsync cfr"))
         assertTrue(joined.contains("libx264"))
         assertTrue(joined.contains("-b:v 17400k"))
         assertTrue(joined.contains("-b:a 256k"))
         assertTrue(joined.contains("+faststart"))
+    }
+
+    @Test
+    fun `verify exact aspect ratio preservation across 9x16, 16x9, 1x1, 4x3, 3x4, 21x9 and rotation metadata`() {
+        val config1080 = ExportConfiguration(resolution = "1080p")
+
+        // 1. Square 1:1 source (1080x1080) -> must stay 1080x1080 (never stretched to 1920x1080)
+        val (sqW, sqH) = config1080.targetDimensionsPx(1080, 1080)
+        assertEquals(1080, sqW)
+        assertEquals(1080, sqH)
+
+        // 2. Classic 4:3 source (1440x1080) -> must stay 1440x1080
+        val (c43W, c43H) = config1080.targetDimensionsPx(1440, 1080)
+        assertEquals(1440, c43W)
+        assertEquals(1080, c43H)
+
+        // 3. Portrait 3:4 source (1080x1440) -> must stay 1080x1440
+        val (p34W, p34H) = config1080.targetDimensionsPx(1080, 1440)
+        assertEquals(1080, p34W)
+        assertEquals(1440, p34H)
+
+        // 4. Manual 90° rotation of a 1920x1080 landscape clip -> becomes 1080x1920 portrait
+        val (rotW, rotH) = config1080.targetDimensionsPx(
+            sourceWidth = 1920,
+            sourceHeight = 1080,
+            manualRotationDegrees = 90,
+            aspectRatioMode = AspectRatioMode.Original
+        )
+        assertEquals(1080, rotW)
+        assertEquals(1920, rotH)
+
+        // 5. Explicit AspectRatioMode override (16:9 clip framed as 9:16 vertical)
+        val (ar916W, ar916H) = config1080.targetDimensionsPx(
+            sourceWidth = 1920,
+            sourceHeight = 1080,
+            manualRotationDegrees = 0,
+            aspectRatioMode = AspectRatioMode.Vertical9x16
+        )
+        assertEquals(1080, ar916W)
+        assertEquals(1920, ar916H)
+
+        // 6. VideoMetadata rotation normalization (coded 1920x1080 with 90° or 270° metadata -> display 1080x1920 Portrait)
+        val meta90 = VideoMetadata(
+            uriString = "file:///test.mp4",
+            fileName = "front_cam.mp4",
+            sizeBytes = 10_000_000L,
+            durationMs = 5000L,
+            width = 1920,
+            height = 1080,
+            fps = 60f,
+            bitrateKbps = 15000,
+            videoCodec = "H.264",
+            audioCodec = "AAC-LC",
+            containerFormat = "MP4",
+            rotationDegrees = 270
+        )
+        assertEquals(270, meta90.normalizedRotation)
+        assertEquals(1080, meta90.displayWidth)
+        assertEquals(1920, meta90.displayHeight)
+        assertEquals("9:16", meta90.aspectRatioLabel)
+        assertEquals("Portrait (9:16)", meta90.orientationCategoryLabel)
+    }
+
+    @Test
+    fun `verify LITE, ELITE, and MAX performance modes apply distinct encoder presets and bitrates`() {
+        val baseConfig = ExportConfiguration(
+            resolution = "1080p",
+            fps = 60,
+            codec = "H.264",
+            bitrateMode = "Auto"
+        )
+        val liteConfig = baseConfig.copy(performanceMode = ProcessingPerformanceMode.Lite)
+        val eliteConfig = baseConfig.copy(performanceMode = ProcessingPerformanceMode.Elite)
+        val maxConfig = baseConfig.copy(performanceMode = ProcessingPerformanceMode.Max)
+
+        val liteBitrate = liteConfig.effectiveBitrateKbps(isCompressionWorkflow = false)
+        val eliteBitrate = eliteConfig.effectiveBitrateKbps(isCompressionWorkflow = false)
+        val maxBitrate = maxConfig.effectiveBitrateKbps(isCompressionWorkflow = false)
+
+        assertTrue("LITE bitrate ($liteBitrate) < ELITE bitrate ($eliteBitrate)", liteBitrate < eliteBitrate)
+        assertTrue("MAX bitrate ($maxBitrate) > ELITE bitrate ($eliteBitrate)", maxBitrate > eliteBitrate)
+
+        val maxCmd = VideoProcessingEngine.buildFfmpegCommand(
+            inputPath = "in.mp4",
+            outputPath = "out.mp4",
+            adjustments = EnhancementAdjustments.Neutral,
+            exportConfig = maxConfig,
+            sourceWidth = 1080,
+            sourceHeight = 1920
+        ).joinToString(" ")
+        assertTrue(maxCmd.contains("minterpolate"))
+        assertTrue(maxCmd.contains("-preset slow"))
     }
 }

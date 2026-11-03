@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Forward5
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -45,6 +46,7 @@ import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Contrast
+import androidx.compose.material.icons.outlined.CropRotate
 import androidx.compose.material.icons.outlined.Eco
 import androidx.compose.material.icons.outlined.Exposure
 import androidx.compose.material.icons.outlined.FileUpload
@@ -57,7 +59,6 @@ import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Thermostat
-import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Verified
 import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material.icons.outlined.WbSunny
@@ -105,13 +106,16 @@ import androidx.core.content.FileProvider
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.example.core.media.ProcessedVideoOutput
 import com.example.core.media.VideoProcessingEngine
+import com.example.domain.model.AspectRatioMode
 import com.example.domain.model.CinematicColorProfile
 import com.example.domain.model.DeviceHardwareCapabilities
 import com.example.domain.model.EnhancementAdjustments
 import com.example.domain.model.ExportConfiguration
+import com.example.domain.model.ProcessingPerformanceMode
 import com.example.domain.model.SocialMediaPreset
 import com.example.domain.model.VideoMetadata
 import com.example.ui.theme.EmeraldPillButton
@@ -121,17 +125,20 @@ import com.example.ui.theme.NeumorphicCard
 import com.example.ui.theme.NeumorphicChoicePill
 import com.example.ui.theme.NeumorphicPillButton
 import com.example.ui.theme.ProcessingCompleteCheckmarkHero
+import com.example.ui.theme.ProcessingPerformanceModeSelector
 import com.example.ui.theme.SocialPresetBadgeIcon
 import com.example.ui.theme.VideoThumbnailPreview
 import com.example.ui.theme.neumorphicInset
 import com.example.ui.theme.neumorphicRaised
+import com.example.ui.theme.rememberResponsiveMetrics
 import com.example.viewmodel.EliteMatrixViewModel
 import java.io.File
 import kotlin.math.abs
 import kotlinx.coroutines.delay
 
 /**
- * Screen 3 — Enhance Video (Exact reference mockup implementation + professional color grading).
+ * Screen 3 — Enhance Video (Exact reference mockup implementation + professional color grading,
+ * orientation & aspect-ratio framing controls).
  */
 @Composable
 fun EnhanceVideoScreen(
@@ -152,17 +159,25 @@ fun EnhanceVideoScreen(
     BackHandler(onBack = onBack)
 
     val neu = LocalNeumorphicColors.current
+    val metrics = rememberResponsiveMetrics()
     var showOverflowMenu by remember { mutableStateOf(false) }
     var showAdvancedOptions by rememberSaveable { mutableStateOf(false) }
     var compareOriginal by rememberSaveable { mutableStateOf(false) }
     var showSavePresetDialog by rememberSaveable { mutableStateOf(false) }
     var isPreviewPlaying by rememberSaveable { mutableStateOf(false) }
 
+    val (targetW, targetH) = exportConfig.targetDimensionsPx(
+        sourceWidth = selectedVideo?.displayWidth ?: 1920,
+        sourceHeight = selectedVideo?.displayHeight ?: 1080,
+        manualRotationDegrees = adjustments.rotationDegrees,
+        aspectRatioMode = adjustments.aspectRatioMode
+    )
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 10.dp)
+            .padding(horizontal = metrics.horizontalPadding, vertical = metrics.verticalPadding)
     ) {
         // 1. Top Bar: Back arrow, "Enhance Video", 3-dot overflow menu
         Row(
@@ -237,13 +252,13 @@ fun EnhanceVideoScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        // 2. Video Preview Card (Rounded 22.dp with centered translucent Play button & bottom-right Fullscreen icon)
+        // 2. Video Preview Card (Rounded 22.dp with exact aspect ratio preservation, Play button & Fullscreen icon)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(216.dp)
+                .height(metrics.videoPreviewHeight)
                 .neumorphicRaised(cornerRadius = 22.dp, elevation = 5.dp)
                 .clip(RoundedCornerShape(22.dp))
                 .clickable {
@@ -264,17 +279,18 @@ fun EnhanceVideoScreen(
                 VideoThumbnailPreview(
                     thumbnailBitmap = thumbnailBitmap,
                     adjustments = if (compareOriginal) EnhancementAdjustments.Neutral else adjustments,
+                    preserveAspectRatio = true,
                     modifier = Modifier.fillMaxSize()
                 )
             }
 
-            // Source Video Spec Badge (Top-Left)
+            // Source Video Spec & Aspect Ratio Badge (Top-Left)
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(12.dp)
+                    .padding(10.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(Color.Black.copy(alpha = 0.58f))
+                    .background(Color.Black.copy(alpha = 0.64f))
                     .clickable { compareOriginal = !compareOriginal }
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
@@ -282,19 +298,20 @@ fun EnhanceVideoScreen(
                     text = if (compareOriginal) {
                         "BEFORE (Original)"
                     } else if (selectedVideo != null) {
-                        "${selectedVideo.exactDimensionsLabel} • ${selectedVideo.formattedFpsLabel} • ${adjustments.cinematicProfile.label}"
+                        val rotSuffix = if (adjustments.rotationDegrees != 0) " • +${adjustments.rotationDegrees}°" else ""
+                        "${selectedVideo.orientationCategoryLabel} • ${targetW}×${targetH}$rotSuffix • ${adjustments.cinematicProfile.label}"
                     } else {
                         "Tap to Preview • ${adjustments.cinematicProfile.label}"
                     },
                     color = Color.White,
-                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp)
+                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.5.sp)
                 )
             }
 
             // Center Play/Pause Circle Button
             Box(
                 modifier = Modifier
-                    .size(56.dp)
+                    .size(52.dp)
                     .align(Alignment.Center)
                     .clip(CircleShape)
                     .background(Color(0xFF102019).copy(alpha = 0.62f))
@@ -312,7 +329,7 @@ fun EnhanceVideoScreen(
                     imageVector = if (isPreviewPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                     contentDescription = if (isPreviewPlaying) "Pause Preview" else "Play Preview",
                     tint = Color.White,
-                    modifier = Modifier.size(30.dp)
+                    modifier = Modifier.size(28.dp)
                 )
             }
 
@@ -320,7 +337,7 @@ fun EnhanceVideoScreen(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(12.dp)
+                    .padding(10.dp)
                     .size(34.dp)
                     .clip(CircleShape)
                     .background(Color(0xFF102019).copy(alpha = 0.62f))
@@ -337,12 +354,12 @@ fun EnhanceVideoScreen(
                     imageVector = Icons.Outlined.Fullscreen,
                     contentDescription = "Fullscreen Preview",
                     tint = Color.White,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(19.dp)
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         // Cinematic Color Profiles Strip
         Row(
@@ -356,22 +373,22 @@ fun EnhanceVideoScreen(
                 val isSelected = adjustments.cinematicProfile == profile
                 Box(
                     modifier = Modifier
-                        .height(34.dp)
+                        .height(32.dp)
                         .then(
                             if (isSelected) {
                                 Modifier
-                                    .clip(RoundedCornerShape(17.dp))
+                                    .clip(RoundedCornerShape(16.dp))
                                     .background(
                                         Brush.horizontalGradient(
                                             listOf(neu.accentPrimary, neu.accentSecondary)
                                         )
                                     )
                             } else {
-                                Modifier.neumorphicRaised(cornerRadius = 17.dp, elevation = 2.dp)
+                                Modifier.neumorphicRaised(cornerRadius = 16.dp, elevation = 2.dp)
                             }
                         )
                         .clickable { onApplyCinematicProfile(profile) }
-                        .padding(horizontal = 13.dp),
+                        .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -379,20 +396,129 @@ fun EnhanceVideoScreen(
                         color = if (isSelected) Color.White else neu.textPrimary,
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 12.sp
+                            fontSize = 11.5.sp
                         )
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Compact Aspect Ratio, Framing & Rotation Strip (Directly Accessible)
+        NeumorphicCard(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = 18.dp,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.CropRotate,
+                            contentDescription = null,
+                            tint = neu.accentPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Aspect Ratio & Orientation",
+                            color = neu.textPrimary,
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        )
+                    }
+                    Text(
+                        text = "${targetW}×${targetH} • ${if (adjustments.scaleToFillCrop) "Center Crop" else "Fit (No Distortion)"}",
+                        color = neu.accentPrimary,
+                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Aspect Ratio Presets Scroll Row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AspectRatioMode.entries.forEach { arMode ->
+                        val isSelected = adjustments.aspectRatioMode == arMode
+                        Box(
+                            modifier = Modifier
+                                .height(30.dp)
+                                .testTag("aspect_ratio_chip_${arMode.name}")
+                                .then(
+                                    if (isSelected) {
+                                        Modifier
+                                            .clip(RoundedCornerShape(15.dp))
+                                            .background(
+                                                Brush.horizontalGradient(
+                                                    listOf(neu.accentPrimary, neu.accentSecondary)
+                                                )
+                                            )
+                                    } else {
+                                        Modifier.neumorphicRaised(cornerRadius = 15.dp, elevation = 2.dp)
+                                    }
+                                )
+                                .clickable { onUpdateAdjustments { it.copy(aspectRatioMode = arMode) } }
+                                .padding(horizontal = 11.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = arMode.shortLabel,
+                                color = if (isSelected) Color.White else neu.textPrimary,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    fontSize = 11.sp
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Rotation (0°, 90°, 180°, 270°) + Framing Mode (Fit vs Crop)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(0, 90, 180, 270).forEach { deg ->
+                        NeumorphicChoicePill(
+                            label = "${deg}°",
+                            selected = adjustments.rotationDegrees == deg,
+                            testTag = "rotate_pill_$deg",
+                            onClick = { onUpdateAdjustments { it.copy(rotationDegrees = deg) } }
+                        )
+                    }
+                    NeumorphicChoicePill(
+                        label = if (adjustments.scaleToFillCrop) "Crop" else "Fit",
+                        selected = adjustments.scaleToFillCrop,
+                        testTag = "framing_fit_crop_pill",
+                        onClick = { onUpdateAdjustments { it.copy(scaleToFillCrop = !it.scaleToFillCrop) } }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
 
         // 3. Adjustments Neumorphic Card
         NeumorphicCard(
             modifier = Modifier.fillMaxWidth(),
-            cornerRadius = 24.dp,
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp)
+            cornerRadius = 22.dp,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 // Header Row: "Adjustments" + "↻ Reset" pill
@@ -406,7 +532,7 @@ fun EnhanceVideoScreen(
                         color = neu.textPrimary,
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp
+                            fontSize = 16.5.sp
                         )
                     )
 
@@ -414,10 +540,10 @@ fun EnhanceVideoScreen(
                     Box(
                         modifier = Modifier
                             .testTag("reset_adjustments_button")
-                            .height(34.dp)
-                            .neumorphicRaised(cornerRadius = 17.dp, elevation = 3.dp)
+                            .height(32.dp)
+                            .neumorphicRaised(cornerRadius = 16.dp, elevation = 3.dp)
                             .clickable(onClick = onResetAdjustments)
-                            .padding(horizontal = 14.dp),
+                            .padding(horizontal = 12.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -425,22 +551,22 @@ fun EnhanceVideoScreen(
                                 imageVector = Icons.Outlined.Refresh,
                                 contentDescription = "Reset Adjustments",
                                 tint = neu.textPrimary,
-                                modifier = Modifier.size(15.dp)
+                                modifier = Modifier.size(14.dp)
                             )
-                            Spacer(modifier = Modifier.width(5.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = "Reset",
                                 color = neu.textPrimary,
                                 style = MaterialTheme.typography.labelMedium.copy(
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 12.5.sp
+                                    fontSize = 12.sp
                                 )
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Slider 1: Brightness (+15)
                 NeumorphicAdjustmentSliderRow(
@@ -482,12 +608,12 @@ fun EnhanceVideoScreen(
                     testTag = "slider_temperature"
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // "Advanced Options v" expandable pill button inside the card
                 NeumorphicPillButton(
                     text = "Advanced Options",
-                    height = 42.dp,
+                    height = 40.dp,
                     testTag = "advanced_options_button",
                     trailingContent = {
                         Icon(
@@ -504,17 +630,17 @@ fun EnhanceVideoScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 14.dp)
+                            .padding(top = 12.dp)
                     ) {
                         HorizontalDivider(color = neu.divider)
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
                             text = "Pro Color Grading & Detail",
                             color = neu.accentPrimary,
                             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
 
                         // Exposure
                         NeumorphicAdjustmentSliderRow(
@@ -566,7 +692,7 @@ fun EnhanceVideoScreen(
                             testTag = "slider_tint"
                         )
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         // Sharpening (unsharp filter)
                         Row(
@@ -598,24 +724,7 @@ fun EnhanceVideoScreen(
                             colors = SliderDefaults.colors(activeTrackColor = neu.accentPrimary)
                         )
 
-                        // Rotation selector
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text("Rotation", style = MaterialTheme.typography.bodyMedium, color = neu.textPrimary)
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            listOf(0, 90, 180, 270).forEach { deg ->
-                                NeumorphicChoicePill(
-                                    label = "${deg}°",
-                                    selected = adjustments.rotationDegrees == deg,
-                                    onClick = { onUpdateAdjustments { it.copy(rotationDegrees = deg) } }
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         // Live FFmpeg Filter Graph Preview
                         val cmdPreview = remember(adjustments, exportConfig, selectedVideo) {
@@ -637,7 +746,7 @@ fun EnhanceVideoScreen(
                             Text(
                                 text = cmdPreview,
                                 color = neu.textSecondary,
-                                style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp)
+                                style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.5.sp)
                             )
                         }
                     }
@@ -645,7 +754,7 @@ fun EnhanceVideoScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // 4. Bottom CTA Button: "⚡ Apply Changes"
         EmeraldPillButton(
@@ -662,7 +771,7 @@ fun EnhanceVideoScreen(
             onClick = onApplyChangesNavigateToExport
         )
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
     }
 
     if (showSavePresetDialog) {
@@ -677,27 +786,36 @@ fun EnhanceVideoScreen(
 }
 
 /**
- * Screen 4 — Export Settings (Exact reference mockup implementation + 50/60/90/120 FPS, Hardware Display Hz detection,
- * Audio Export options, and Social Media Anti-Recompression Engine).
+ * Screen 4 — Export Settings (Exact reference mockup implementation + LITE/ELITE/MAX performance modes,
+ * 50/60/90/120 FPS, Hardware Display Hz detection, Audio Export options, and Social Media Anti-Recompression Engine).
  */
 @Composable
 fun ExportSettingsScreen(
     selectedVideo: VideoMetadata?,
+    adjustments: EnhancementAdjustments = EnhancementAdjustments(),
     exportConfig: ExportConfiguration,
     deviceCapabilities: DeviceHardwareCapabilities = DeviceHardwareCapabilities(),
     isProcessing: Boolean,
+    isPaused: Boolean = false,
     processingProgress: Int,
     processingStatus: String,
+    elapsedTimeMs: Long = 0L,
+    estimatedRemainingMs: Long = 0L,
     onUpdateExportConfig: ((ExportConfiguration) -> ExportConfiguration) -> Unit,
+    onSelectPerformanceMode: (ProcessingPerformanceMode) -> Unit = {},
     onApplyRecommendedHardwareSettings: () -> Unit = {},
     onSelectSocialPreset: (SocialMediaPreset) -> Unit,
     onSavePreset: (String) -> Unit,
     onStartExportJob: () -> Unit,
+    onPauseProcessing: () -> Unit = {},
+    onResumeProcessing: () -> Unit = {},
+    onCancelProcessing: () -> Unit = {},
     onBack: () -> Unit
 ) {
     BackHandler(onBack = onBack)
 
     val neu = LocalNeumorphicColors.current
+    val metrics = rememberResponsiveMetrics()
     var showCustomBitrateEditor by rememberSaveable { mutableStateOf(false) }
     var showSocialPresetSheet by rememberSaveable { mutableStateOf(false) }
     var showAdvancedExportControls by rememberSaveable { mutableStateOf(false) }
@@ -705,7 +823,9 @@ fun ExportSettingsScreen(
 
     val (targetW, targetH) = exportConfig.targetDimensionsPx(
         sourceWidth = selectedVideo?.displayWidth ?: 1920,
-        sourceHeight = selectedVideo?.displayHeight ?: 1080
+        sourceHeight = selectedVideo?.displayHeight ?: 1080,
+        manualRotationDegrees = adjustments.rotationDegrees,
+        aspectRatioMode = adjustments.aspectRatioMode
     )
     val effectiveBitrateKbps = exportConfig.effectiveBitrateKbps(isCompressionWorkflow = false)
     val effectiveMbps = "%.1f".format(effectiveBitrateKbps / 1000f)
@@ -714,7 +834,7 @@ fun ExportSettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 10.dp)
+            .padding(horizontal = metrics.horizontalPadding, vertical = metrics.verticalPadding)
     ) {
         // 1. Top Bar: Back arrow, "Export Settings", Save floppy icon
         Row(
@@ -754,13 +874,13 @@ fun ExportSettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
         // Hardware & Display Refresh Rate Intelligence Banner
         NeumorphicCard(
             modifier = Modifier.fillMaxWidth(),
             cornerRadius = 16.dp,
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -784,24 +904,24 @@ fun ExportSettingsScreen(
                             color = neu.textPrimary,
                             style = MaterialTheme.typography.labelLarge.copy(
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
+                                fontSize = 11.5.sp
                             )
                         )
                         Text(
-                            text = "Target Output: ${targetW}×${targetH} • ${exportConfig.fps} FPS CFR • $effectiveMbps Mbps",
+                            text = "Output: ${targetW}×${targetH} (${adjustments.aspectRatioMode.shortLabel}) • ${exportConfig.fps} FPS • $effectiveMbps Mbps (${exportConfig.performanceMode.badgeLabel})",
                             color = neu.accentPrimary,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp)
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 10.5.sp)
                         )
                     }
                 }
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Box(
                     modifier = Modifier
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(15.dp))
+                        .height(28.dp)
+                        .clip(RoundedCornerShape(14.dp))
                         .background(neu.accentPrimary.copy(alpha = 0.14f))
                         .clickable(onClick = onApplyRecommendedHardwareSettings)
-                        .padding(horizontal = 10.dp),
+                        .padding(horizontal = 9.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -809,14 +929,34 @@ fun ExportSettingsScreen(
                         color = neu.accentPrimary,
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
+                            fontSize = 10.5.sp
                         )
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // LITE / ELITE / MAX Processing Performance Mode Selector
+        Text(
+            text = "Processing Performance Mode",
+            color = neu.textPrimary,
+            style = MaterialTheme.typography.titleMedium.copy(
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp
+            )
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        ProcessingPerformanceModeSelector(
+            selectedMode = exportConfig.performanceMode,
+            onSelectMode = { mode ->
+                onSelectPerformanceMode(mode)
+                onUpdateExportConfig { it.copy(performanceMode = mode) }
+            }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
 
         // 2. Resolution ("720p", "1080p", "2K", "4K")
         Row(
@@ -829,7 +969,7 @@ fun ExportSettingsScreen(
                 color = neu.textPrimary,
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.5.sp
+                    fontSize = 14.sp
                 )
             )
             Text(
@@ -838,7 +978,7 @@ fun ExportSettingsScreen(
                 style = MaterialTheme.typography.labelMedium
             )
         }
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -853,7 +993,7 @@ fun ExportSettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // 3. Frame Rate ("24", "30", "60" + High-Refresh "50", "90", "120" FPS)
         Row(
@@ -866,7 +1006,7 @@ fun ExportSettingsScreen(
                 color = neu.textPrimary,
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.5.sp
+                    fontSize = 14.sp
                 )
             )
             Text(
@@ -875,10 +1015,10 @@ fun ExportSettingsScreen(
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
             )
         }
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             listOf(24, 30, 60).forEach { fpsVal ->
                 NeumorphicChoicePill(
@@ -889,10 +1029,10 @@ fun ExportSettingsScreen(
                 )
             }
         }
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             listOf(50, 90, 120).forEach { fpsVal ->
                 NeumorphicChoicePill(
@@ -904,7 +1044,7 @@ fun ExportSettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // 4. Video Codec ("H.264", "H.265", "AV1")
         Text(
@@ -912,13 +1052,13 @@ fun ExportSettingsScreen(
             color = neu.textPrimary,
             style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.Bold,
-                fontSize = 14.5.sp
+                fontSize = 14.sp
             )
         )
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             listOf("H.264", "H.265", "AV1").forEach { codecName ->
                 NeumorphicChoicePill(
@@ -930,7 +1070,7 @@ fun ExportSettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // 5. Bitrate ("Auto" pill + "Custom       >" wide pill)
         Row(
@@ -943,19 +1083,19 @@ fun ExportSettingsScreen(
                 color = neu.textPrimary,
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.5.sp
+                    fontSize = 14.sp
                 )
             )
             Text(
-                text = "$effectiveMbps Mbps (${exportConfig.bitrateMode})",
+                text = "$effectiveMbps Mbps (${exportConfig.bitrateMode} • ${exportConfig.performanceMode.badgeLabel})",
                 color = neu.textSecondary,
                 style = MaterialTheme.typography.labelMedium
             )
         }
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             NeumorphicChoicePill(
@@ -973,19 +1113,19 @@ fun ExportSettingsScreen(
             Box(
                 modifier = Modifier
                     .weight(1.9f)
-                    .height(42.dp)
+                    .height(40.dp)
                     .testTag("bitrate_pill_custom")
                     .then(
                         if (isCustom) {
                             Modifier
-                                .clip(RoundedCornerShape(22.dp))
+                                .clip(RoundedCornerShape(20.dp))
                                 .background(
                                     Brush.horizontalGradient(
                                         listOf(neu.accentPrimary, neu.accentSecondary)
                                     )
                                 )
                         } else {
-                            Modifier.neumorphicRaised(cornerRadius = 22.dp, elevation = 3.dp)
+                            Modifier.neumorphicRaised(cornerRadius = 20.dp, elevation = 3.dp)
                         }
                     )
                     .clickable {
@@ -1009,7 +1149,7 @@ fun ExportSettingsScreen(
                         color = if (isCustom) Color.White else neu.textPrimary,
                         style = MaterialTheme.typography.labelLarge.copy(
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp
+                            fontSize = 12.5.sp
                         )
                     )
                     Icon(
@@ -1026,9 +1166,9 @@ fun ExportSettingsScreen(
             NeumorphicCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 12.dp),
+                    .padding(top = 10.dp),
                 cornerRadius = 18.dp,
-                contentPadding = PaddingValues(14.dp)
+                contentPadding = PaddingValues(12.dp)
             ) {
                 val durationSec = ((selectedVideo?.durationMs ?: 15_000L) / 1000.0).coerceAtLeast(1.0)
                 val estBytes = ((effectiveBitrateKbps + exportConfig.audioBitrateKbps) * 1000L / 8.0 * durationSec * 1.02).toLong()
@@ -1038,7 +1178,7 @@ fun ExportSettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Target Bitrate: ${exportConfig.customBitrateKbps} kbps (${"%.1f".format(exportConfig.customBitrateKbps / 1000f)} Mbps)",
+                            text = "Target: ${exportConfig.customBitrateKbps} kbps (${"%.1f".format(exportConfig.customBitrateKbps / 1000f)} Mbps)",
                             style = MaterialTheme.typography.labelLarge,
                             color = neu.textPrimary
                         )
@@ -1062,7 +1202,7 @@ fun ExportSettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // 6. Format ("MP4", "MOV", "MKV")
         Text(
@@ -1070,13 +1210,13 @@ fun ExportSettingsScreen(
             color = neu.textPrimary,
             style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.Bold,
-                fontSize = 14.5.sp
+                fontSize = 14.sp
             )
         )
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             listOf("MP4", "MOV", "MKV").forEach { fmt ->
                 NeumorphicChoicePill(
@@ -1088,9 +1228,9 @@ fun ExportSettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         HorizontalDivider(color = neu.divider)
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         // 7. Social Media Presets & Anti-Recompression Engine
         Row(
@@ -1103,7 +1243,7 @@ fun ExportSettingsScreen(
                 color = neu.textPrimary,
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.5.sp
+                    fontSize = 14.sp
                 )
             )
             Text(
@@ -1116,15 +1256,15 @@ fun ExportSettingsScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         val activeSocial = exportConfig.selectedSocialPreset
         NeumorphicCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("social_preset_card"),
-            cornerRadius = 20.dp,
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+            cornerRadius = 18.dp,
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
             onClick = { showSocialPresetSheet = !showSocialPresetSheet }
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -1133,21 +1273,21 @@ fun ExportSettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     SocialPresetBadgeIcon(presetName = activeSocial.title)
-                    Spacer(modifier = Modifier.width(14.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = activeSocial.title,
                             color = neu.textPrimary,
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
+                                fontSize = 14.5.sp
                             )
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(1.dp))
                         Text(
                             text = activeSocial.subtitle,
                             color = neu.textSecondary,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.5.sp)
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
                         )
                     }
                     Icon(
@@ -1157,11 +1297,11 @@ fun ExportSettingsScreen(
                     )
                 }
                 if (exportConfig.socialOptimizationEnabled) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "✓ Anti-Recompression Guard: ${activeSocial.antiCompressionNote}",
                         color = neu.accentPrimary,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp)
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 10.5.sp)
                     )
                 }
             }
@@ -1171,14 +1311,14 @@ fun ExportSettingsScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp),
+                    .padding(top = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 SocialMediaPreset.entries.forEach { preset ->
                     NeumorphicCard(
                         modifier = Modifier.fillMaxWidth(),
                         cornerRadius = 16.dp,
-                        contentPadding = PaddingValues(12.dp),
+                        contentPadding = PaddingValues(11.dp),
                         onClick = {
                             onSelectSocialPreset(preset)
                             showSocialPresetSheet = false
@@ -1188,18 +1328,18 @@ fun ExportSettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            SocialPresetBadgeIcon(presetName = preset.title, modifier = Modifier.size(32.dp))
-                            Spacer(modifier = Modifier.width(12.dp))
+                            SocialPresetBadgeIcon(presetName = preset.title, modifier = Modifier.size(30.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(preset.title, style = MaterialTheme.typography.titleMedium, color = neu.textPrimary)
                                 Text(
                                     "${preset.subtitle} • ${"%.1f".format(preset.bitrateKbps / 1000f)} Mbps",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp),
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
                                     color = neu.accentPrimary
                                 )
                                 Text(
                                     preset.antiCompressionNote,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 10.5.sp),
                                     color = neu.textSecondary
                                 )
                             }
@@ -1213,9 +1353,9 @@ fun ExportSettingsScreen(
             NeumorphicCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 12.dp),
+                    .padding(top = 10.dp),
                 cornerRadius = 18.dp,
-                contentPadding = PaddingValues(14.dp)
+                contentPadding = PaddingValues(12.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1233,7 +1373,7 @@ fun ExportSettingsScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     // Audio Codec
                     Text("Audio Codec", style = MaterialTheme.typography.labelLarge, color = neu.textPrimary)
@@ -1251,7 +1391,7 @@ fun ExportSettingsScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     // Audio Bitrate
                     Text("Audio Bitrate (kbps)", style = MaterialTheme.typography.labelLarge, color = neu.textPrimary)
@@ -1269,7 +1409,7 @@ fun ExportSettingsScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     // Audio Sample Rate
                     Text("Audio Sample Rate", style = MaterialTheme.typography.labelLarge, color = neu.textPrimary)
@@ -1287,9 +1427,9 @@ fun ExportSettingsScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     HorizontalDivider(color = neu.divider)
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     // Social Anti-Recompression Lock Switch
                     Row(
@@ -1317,7 +1457,7 @@ fun ExportSettingsScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1351,39 +1491,85 @@ fun ExportSettingsScreen(
         }
 
         if (isProcessing) {
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             NeumorphicCard(
                 modifier = Modifier.fillMaxWidth(),
                 cornerRadius = 18.dp,
-                contentPadding = PaddingValues(14.dp)
+                contentPadding = PaddingValues(12.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(processingStatus, style = MaterialTheme.typography.labelLarge, color = neu.textPrimary)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = processingStatus,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = neu.textPrimary
+                            )
+                            Text(
+                                text = "Elapsed: ${EliteMatrixViewModel.formatDurationSeconds(elapsedTimeMs)} • ETA: ${if (estimatedRemainingMs > 0L) EliteMatrixViewModel.formatDurationSeconds(estimatedRemainingMs) else "Calculating..."}",
+                                style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
+                                color = neu.textSecondary
+                            )
+                        }
                         Text("$processingProgress%", style = MaterialTheme.typography.labelLarge, color = neu.accentPrimary)
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     LinearProgressIndicator(
                         progress = { processingProgress / 100f },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(6.dp)
                             .clip(RoundedCornerShape(3.dp)),
-                        color = neu.accentPrimary,
+                        color = if (isPaused) neu.sunAmber else neu.accentPrimary,
                         trackColor = neu.surfaceInset
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        NeumorphicPillButton(
+                            text = if (isPaused) "Resume" else "Pause",
+                            height = 36.dp,
+                            leadingContent = {
+                                Icon(
+                                    imageVector = if (isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                                    contentDescription = null,
+                                    tint = neu.accentPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            modifier = Modifier.weight(1f),
+                            onClick = { if (isPaused) onResumeProcessing() else onPauseProcessing() }
+                        )
+                        NeumorphicPillButton(
+                            text = "Cancel",
+                            height = 36.dp,
+                            leadingContent = {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            modifier = Modifier.weight(1f),
+                            onClick = onCancelProcessing
+                        )
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // 8. Bottom Primary Emerald CTA Button: "[↑] Export Video"
         EmeraldPillButton(
-            text = "Export Video",
+            text = "Export Video (${exportConfig.performanceMode.badgeLabel})",
             testTag = "export_video_button",
             isLoading = isProcessing,
             leadingIcon = {
@@ -1397,7 +1583,7 @@ fun ExportSettingsScreen(
             onClick = onStartExportJob
         )
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
     }
 
     if (showSavePresetDialog) {
@@ -1477,35 +1663,35 @@ fun ProcessingCompleteScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 20.dp),
+                .padding(horizontal = 20.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(2.dp))
 
             // 1. Concentric Mint Halo Checkmark Hero + Title & Subtitle
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 ProcessingCompleteCheckmarkHero()
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 Text(
                     text = "Processing Complete!",
                     color = neu.textPrimary,
                     style = MaterialTheme.typography.headlineMedium.copy(
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 23.sp
+                        fontSize = 22.sp
                     )
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Text(
                     text = "Your video is ready",
                     color = neu.textSecondary,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.5.sp)
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // 2. Output Summary Card ("Nature_Video.mp4" / "24.5 MB → 18.7 MB" / "🌿 24% smaller") + Verified Spec Table
             NeumorphicCard(
@@ -1513,7 +1699,7 @@ fun ProcessingCompleteScreen(
                     .fillMaxWidth()
                     .testTag("processing_complete_summary_card"),
                 cornerRadius = 22.dp,
-                contentPadding = PaddingValues(16.dp)
+                contentPadding = PaddingValues(14.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -1522,16 +1708,17 @@ fun ProcessingCompleteScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(width = 90.dp, height = 68.dp)
+                                .size(width = 86.dp, height = 64.dp)
                                 .clip(RoundedCornerShape(14.dp))
                         ) {
                             VideoThumbnailPreview(
                                 thumbnailBitmap = thumbnailBitmap,
+                                preserveAspectRatio = true,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
 
-                        Spacer(modifier = Modifier.width(16.dp))
+                        Spacer(modifier = Modifier.width(14.dp))
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
@@ -1539,36 +1726,36 @@ fun ProcessingCompleteScreen(
                                 color = neu.textPrimary,
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp
+                                    fontSize = 14.5.sp
                                 ),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(3.dp))
                             Text(
                                 text = "${EliteMatrixViewModel.formatBytes(origBytes)} → ${EliteMatrixViewModel.formatBytes(outBytes)}",
                                 color = neu.textSecondary,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp)
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.5.sp)
                             )
-                            Spacer(modifier = Modifier.height(5.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     imageVector = Icons.Outlined.Eco,
                                     contentDescription = null,
                                     tint = neu.accentPrimary,
-                                    modifier = Modifier.size(15.dp)
+                                    modifier = Modifier.size(14.dp)
                                 )
-                                Spacer(modifier = Modifier.width(5.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     text = savingsLabel,
                                     color = neu.accentPrimary,
                                     style = MaterialTheme.typography.labelLarge.copy(
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 12.5.sp
+                                        fontSize = 12.sp
                                     )
                                 )
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(3.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     imageVector = Icons.Filled.CheckCircle,
@@ -1589,16 +1776,16 @@ fun ProcessingCompleteScreen(
                     }
 
                     if (completedOutput != null) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        HorizontalDivider(color = neu.divider)
                         Spacer(modifier = Modifier.height(10.dp))
+                        HorizontalDivider(color = neu.divider)
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 imageVector = Icons.Outlined.Verified,
                                 contentDescription = null,
                                 tint = neu.accentPrimary,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
@@ -1660,12 +1847,12 @@ fun ProcessingCompleteScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             // 3. Action Buttons ("▶ Open Video", "<o> Share", "[Folder] Go to Projects")
             Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 EmeraldPillButton(
                     text = "Open Video",
@@ -1719,7 +1906,7 @@ fun ProcessingCompleteScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(10.dp))
         }
     }
 }
@@ -1767,10 +1954,12 @@ fun InlineExoPlayerView(
             PlayerView(ctx).apply {
                 player = exoPlayer
                 useController = true
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             }
         },
         update = { view ->
             view.player = exoPlayer
+            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         },
         modifier = modifier
     )
@@ -1878,7 +2067,7 @@ fun VideoPlaybackModalDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Video Surface
+                // Video Surface (RESIZE_MODE_FIT preserves exact portrait/landscape/custom aspect ratio)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1891,10 +2080,12 @@ fun VideoPlaybackModalDialog(
                             PlayerView(ctx).apply {
                                 player = exoPlayer
                                 useController = false
+                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                             }
                         },
                         update = { view ->
                             view.player = exoPlayer
+                            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                         },
                         modifier = Modifier.fillMaxSize()
                     )

@@ -26,6 +26,7 @@ import com.example.data.remote.FirestoreProcessingJob
 import com.example.data.remote.FirestoreUserPreferences
 import com.example.data.remote.FirestoreVideoPreset
 import com.example.domain.model.AppFontFamily
+import com.example.domain.model.AspectRatioMode
 import com.example.domain.model.BuiltInPresets
 import com.example.domain.model.CinematicColorProfile
 import com.example.domain.model.DeviceHardwareCapabilities
@@ -35,6 +36,7 @@ import com.example.domain.model.ExportConfiguration
 import com.example.domain.model.ExportItem
 import com.example.domain.model.JobItem
 import com.example.domain.model.PresetItem
+import com.example.domain.model.ProcessingPerformanceMode
 import com.example.domain.model.SocialMediaPreset
 import com.example.domain.model.ThemeMode
 import com.example.domain.model.ThemePalette
@@ -43,6 +45,8 @@ import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -83,8 +87,12 @@ data class EditorUiState(
     val exportConfig: ExportConfiguration = ExportConfiguration(),
     val deviceCapabilities: DeviceHardwareCapabilities = DeviceHardwareCapabilities(),
     val isProcessing: Boolean = false,
+    val isPaused: Boolean = false,
+    val activeJobId: String? = null,
     val processingStatus: String = "Idle",
     val processingProgress: Int = 0,
+    val elapsedTimeMs: Long = 0L,
+    val estimatedRemainingMs: Long = 0L,
     val lastCompletedOutput: ProcessedVideoOutput? = null,
     val statusMessage: String? = null,
     val showCloudConsentDialog: Boolean = false,
@@ -102,12 +110,16 @@ class EliteMatrixViewModel(
 
     private val _editorState = MutableStateFlow(
         EditorUiState(
-            deviceCapabilities = initialDeviceCapabilities
+            deviceCapabilities = initialDeviceCapabilities,
+            exportConfig = ExportConfiguration(
+                performanceMode = initialDeviceCapabilities.recommendedPerformanceMode
+            )
         )
     )
     val editorState: StateFlow<EditorUiState> = _editorState.asStateFlow()
 
     private var activeProcessingJob: Job? = null
+    private val pauseFlag = AtomicBoolean(false)
 
     val preferencesState: StateFlow<AppPreferencesState> = preferencesDataSource.preferencesFlow
         .stateIn(
@@ -116,7 +128,6 @@ class EliteMatrixViewModel(
             initialValue = AppPreferencesState()
         )
 
-    // Combine local Room presets with built-in HQ presets (and Firestore presets when authenticated)
     private val remotePresetsFlow = if (authenticatedUserId != null) {
         firestoreRepository.observePresets()
             .catch { e ->
@@ -282,9 +293,23 @@ class EliteMatrixViewModel(
                     resolution = caps.recommendedResolution,
                     fps = targetFps,
                     codec = if ("H.265" in caps.supportedCodecs && targetFps >= 90) "H.265" else "H.264",
-                    bitrateMode = "Auto"
+                    bitrateMode = "Auto",
+                    performanceMode = caps.recommendedPerformanceMode,
+                    encoderPreset = caps.recommendedPerformanceMode.ffmpegPreset
                 ),
-                statusMessage = "Matched ${caps.displayRefreshRateHz}Hz display: ${caps.recommendedResolution} • $targetFps FPS"
+                statusMessage = "Auto-tuned for ${caps.displayRefreshRateHz}Hz display: ${caps.recommendedPerformanceMode.badge} • ${caps.recommendedResolution} • $targetFps FPS"
+            )
+        }
+    }
+
+    fun setPerformanceMode(mode: ProcessingPerformanceMode) {
+        _editorState.update { state ->
+            state.copy(
+                exportConfig = state.exportConfig.copy(
+                    performanceMode = mode,
+                    encoderPreset = mode.ffmpegPreset
+                ),
+                statusMessage = "Activated ${mode.title} (${mode.subtitle})"
             )
         }
     }
@@ -391,13 +416,24 @@ class EliteMatrixViewModel(
         viewModelScope.launch {
             val inspected = VideoProcessingEngine.inspectVideo(context, uri)
             inspected.onSuccess { meta ->
-                val thumb = VideoProcessingEngine.extractThumbnail(context, uri)
+                val thumb = VideoProcessingEngine.extractThumbnail(
+                    context = context,
+                    uri = uri,
+                    manualRotationDegrees = _editorState.value.adjustments.rotationDegrees
+                )
                 _editorState.update { state ->
+                    // Reset manual rotation when importing a fresh video so container rotation is respected cleanly
+                    val cleanAdj = state.adjustments.copy(
+                        rotationDegrees = 0,
+                        aspectRatioMode = AspectRatioMode.Original,
+                        cropRatio = "Original"
+                    )
                     state.copy(
                         selectedVideo = meta,
                         videoThumbnail = thumb,
+                        adjustments = cleanAdj,
                         activeScreen = targetScreenAfterImport ?: state.activeScreen,
-                        statusMessage = "Loaded ${meta.fileName} (${meta.exactDimensionsLabel} • ${meta.formattedFpsLabel} • ${formatBytes(meta.sizeBytes)})"
+                        statusMessage = "Loaded ${meta.fileName} (${meta.exactDimensionsLabel} • ${meta.orientationCategoryLabel} • ${meta.formattedFpsLabel})"
                     )
                 }
             }.onFailure { err ->
@@ -420,7 +456,7 @@ class EliteMatrixViewModel(
                         selectedVideo = meta,
                         videoThumbnail = thumb,
                         activeScreen = targetScreen ?: state.activeScreen,
-                        statusMessage = "Loaded Nature_Video.mp4 (${meta?.resolutionLabel ?: "720p"} • ${meta?.formattedFpsLabel ?: "30 FPS"})"
+                        statusMessage = "Loaded Nature_Video.mp4 (${meta?.exactDimensionsLabel ?: "640×360"} • ${meta?.orientationCategoryLabel ?: "Landscape (16:9)"})"
                     )
                 }
             }.onFailure { err ->
@@ -558,6 +594,13 @@ class EliteMatrixViewModel(
     }
 
     fun requestStartProcessing(context: Context, operationType: String = "enhance") {
+        if (_editorState.value.isProcessing) {
+            _editorState.update {
+                it.copy(statusMessage = "A video processing job is already running. Pause or cancel it first.")
+            }
+            return
+        }
+
         val prefs = preferencesState.value
         val exp = _editorState.value.exportConfig
         val isHeavyJob = exp.resolution in listOf("2K", "4K") || exp.codec == "AV1"
@@ -603,21 +646,27 @@ class EliteMatrixViewModel(
     fun executeProcessingJob(
         context: Context,
         operationType: String = "enhance",
-        useCloudRoute: Boolean = false
+        useCloudRoute: Boolean = false,
+        existingJobId: String? = null
     ) {
         if (_editorState.value.isProcessing) return
+        pauseFlag.set(false)
 
         activeProcessingJob = viewModelScope.launch {
+            val jobId = existingJobId ?: "job_${UUID.randomUUID().toString().replace("-", "").take(12)}"
             _editorState.update {
                 it.copy(
                     isProcessing = true,
+                    isPaused = false,
+                    activeJobId = jobId,
                     processingProgress = 2,
+                    elapsedTimeMs = 0L,
+                    estimatedRemainingMs = 0L,
                     processingStatus = "Preparing source video...",
                     statusMessage = null
                 )
             }
 
-            // Ensure a real video file is loaded; if none selected yet, generate the real H.264 sample clip first
             var sourceMeta = _editorState.value.selectedVideo
             if (sourceMeta == null) {
                 val sampleUri = VideoProcessingEngine.generateRealSampleVideoMp4(context, "Nature_Video.mp4").getOrNull()
@@ -632,6 +681,8 @@ class EliteMatrixViewModel(
                 _editorState.update {
                     it.copy(
                         isProcessing = false,
+                        isPaused = false,
+                        activeJobId = null,
                         statusMessage = "Please select or import a video file first."
                     )
                 }
@@ -643,9 +694,14 @@ class EliteMatrixViewModel(
             val exportConfig = _editorState.value.exportConfig
             val isCompressionWorkflow = operationType.equals("compress", ignoreCase = true)
             val targetBitrateKbps = exportConfig.effectiveBitrateKbps(isCompressionWorkflow)
-            val jobId = "job_${UUID.randomUUID().toString().replace("-", "").take(12)}"
+            val (targetW, targetH) = exportConfig.targetDimensionsPx(
+                sourceWidth = validMeta.displayWidth,
+                sourceHeight = validMeta.displayHeight,
+                manualRotationDegrees = adjustments.rotationDegrees,
+                aspectRatioMode = adjustments.aspectRatioMode
+            )
             val routeLabel = if (useCloudRoute && authenticatedUserId != null) "cloud" else "local"
-            val summary = "${exportConfig.resolution} • ${exportConfig.fps} FPS • ${"%.1f".format(targetBitrateKbps / 1000f)} Mbps • ${exportConfig.codec} • ${exportConfig.containerFormat}"
+            val summary = "${exportConfig.performanceMode.badge} • ${targetW}×${targetH} (${exportConfig.resolution}) • ${exportConfig.fps} FPS • ${"%.1f".format(targetBitrateKbps / 1000f)} Mbps • ${exportConfig.codec} • ${exportConfig.containerFormat}"
 
             val initialJob = JobItem(
                 id = jobId,
@@ -705,11 +761,27 @@ class EliteMatrixViewModel(
                     adjustments = adjustments,
                     exportConfig = exportConfig,
                     isCompressionWorkflow = isCompressionWorkflow,
+                    isPausedProvider = { pauseFlag.get() },
+                    onDetailedProgress = { pct, elapsed, eta, phase ->
+                        _editorState.update { state ->
+                            state.copy(
+                                processingStatus = if (pauseFlag.get()) "Paused • $phase" else phase,
+                                processingProgress = pct,
+                                elapsedTimeMs = elapsed,
+                                estimatedRemainingMs = eta
+                            )
+                        }
+                    },
                     onProgress = { pct ->
-                        _editorState.update {
-                            it.copy(
-                                processingStatus = "Encoding ${exportConfig.resolution} • ${exportConfig.fps} FPS (${pct}%)",
-                                processingProgress = pct
+                        viewModelScope.launch {
+                            localDao.upsertJob(
+                                LocalJobEntity.fromDomain(
+                                    initialJob.copy(
+                                        status = if (pauseFlag.get()) "paused" else "processing",
+                                        progressPercent = pct,
+                                        updatedAtMillis = System.currentTimeMillis()
+                                    )
+                                )
                             )
                         }
                     }
@@ -734,7 +806,7 @@ class EliteMatrixViewModel(
                     originalSizeBytes = output.originalSizeBytes,
                     outputSizeBytes = output.outputSizeBytes,
                     savedPercent = output.savedPercent,
-                    resolution = output.resolutionLabel,
+                    resolution = "${output.width}×${output.height} (${output.resolutionLabel})",
                     fps = output.fps,
                     codec = output.codec,
                     containerFormat = output.containerFormat,
@@ -775,6 +847,8 @@ class EliteMatrixViewModel(
                 _editorState.update { state ->
                     state.copy(
                         isProcessing = false,
+                        isPaused = false,
+                        activeJobId = null,
                         processingProgress = 100,
                         processingStatus = "Completed",
                         lastCompletedOutput = output,
@@ -783,6 +857,7 @@ class EliteMatrixViewModel(
                     )
                 }
             }.onFailure { err ->
+                if (err is CancellationException) return@onFailure
                 val failedJob = initialJob.copy(
                     status = "failed",
                     errorCode = "ENCODE_ERROR",
@@ -802,6 +877,8 @@ class EliteMatrixViewModel(
                 _editorState.update {
                     it.copy(
                         isProcessing = false,
+                        isPaused = false,
+                        activeJobId = null,
                         processingStatus = "Failed",
                         statusMessage = "Processing failed: ${err.localizedMessage ?: "Encoder error"}"
                     )
@@ -810,15 +887,130 @@ class EliteMatrixViewModel(
         }
     }
 
+    fun pauseActiveProcessing() {
+        if (!_editorState.value.isProcessing) return
+        pauseFlag.set(true)
+        val jobId = _editorState.value.activeJobId
+        _editorState.update {
+            it.copy(
+                isPaused = true,
+                processingStatus = "Paused (${it.processingProgress}%)",
+                statusMessage = "Processing paused. Tap Resume to continue."
+            )
+        }
+        if (jobId != null) {
+            viewModelScope.launch {
+                val existing = jobsState.value.firstOrNull { it.id == jobId }
+                if (existing != null) {
+                    localDao.upsertJob(
+                        LocalJobEntity.fromDomain(
+                            existing.copy(
+                                status = "paused",
+                                updatedAtMillis = System.currentTimeMillis()
+                            )
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    fun resumeActiveProcessing() {
+        if (!_editorState.value.isProcessing) return
+        pauseFlag.set(false)
+        val jobId = _editorState.value.activeJobId
+        _editorState.update {
+            it.copy(
+                isPaused = false,
+                processingStatus = "Resuming pipeline (${it.processingProgress}%)...",
+                statusMessage = "Resumed video processing."
+            )
+        }
+        if (jobId != null) {
+            viewModelScope.launch {
+                val existing = jobsState.value.firstOrNull { it.id == jobId }
+                if (existing != null) {
+                    localDao.upsertJob(
+                        LocalJobEntity.fromDomain(
+                            existing.copy(
+                                status = "processing",
+                                updatedAtMillis = System.currentTimeMillis()
+                            )
+                        )
+                    )
+                }
+            }
+        }
+    }
+
     fun cancelActiveProcessing() {
+        val jobId = _editorState.value.activeJobId
+        pauseFlag.set(false)
         activeProcessingJob?.cancel()
         activeProcessingJob = null
         _editorState.update {
             it.copy(
                 isProcessing = false,
+                isPaused = false,
+                activeJobId = null,
                 processingStatus = "Cancelled",
                 statusMessage = "Processing job cancelled."
             )
+        }
+        if (jobId != null) {
+            viewModelScope.launch {
+                val existing = jobsState.value.firstOrNull { it.id == jobId }
+                if (existing != null) {
+                    localDao.upsertJob(
+                        LocalJobEntity.fromDomain(
+                            existing.copy(
+                                status = "cancelled",
+                                updatedAtMillis = System.currentTimeMillis()
+                            )
+                        )
+                    )
+                }
+                if (authenticatedUserId != null) {
+                    firestoreRepository.updateJobProgress(
+                        jobId = jobId,
+                        status = "cancelled",
+                        progressPercent = _editorState.value.processingProgress
+                    )
+                }
+            }
+        }
+    }
+
+    fun retryJob(context: Context, job: JobItem) {
+        if (_editorState.value.isProcessing) {
+            _editorState.update {
+                it.copy(statusMessage = "Wait for the active job to finish or cancel it before retrying.")
+            }
+            return
+        }
+        viewModelScope.launch {
+            if (job.sourceUri.isNotBlank()) {
+                val inspected = VideoProcessingEngine.inspectVideo(context, Uri.parse(job.sourceUri)).getOrNull()
+                if (inspected != null) {
+                    val thumb = VideoProcessingEngine.extractThumbnail(context, Uri.parse(job.sourceUri))
+                    _editorState.update { it.copy(selectedVideo = inspected, videoThumbnail = thumb) }
+                }
+            }
+            executeProcessingJob(
+                context = context,
+                operationType = job.operationType,
+                useCloudRoute = job.executionRoute.equals("cloud", ignoreCase = true),
+                existingJobId = job.id
+            )
+        }
+    }
+
+    fun removeJob(job: JobItem) {
+        if (_editorState.value.activeJobId == job.id && _editorState.value.isProcessing) {
+            cancelActiveProcessing()
+        }
+        viewModelScope.launch {
+            localDao.deleteJob(job.id)
         }
     }
 
@@ -903,6 +1095,16 @@ class EliteMatrixViewModel(
                 "%.0f KB".format(kb)
             }
         }
+
+        fun formatDurationCompact(ms: Long): String {
+            if (ms <= 0L) return "0s"
+            val totalSec = (ms / 1000L).coerceAtLeast(1L)
+            val m = totalSec / 60L
+            val s = totalSec % 60L
+            return if (m > 0L) "${m}m ${s}s" else "${s}s"
+        }
+
+        fun formatDurationSeconds(ms: Long): String = formatDurationCompact(ms)
 
         fun provideFactory(
             context: Context,

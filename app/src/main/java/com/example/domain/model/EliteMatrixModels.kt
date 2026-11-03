@@ -1,5 +1,6 @@
 package com.example.domain.model
 
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 enum class ThemePalette(val displayName: String, val isDarkPalette: Boolean = false) {
@@ -39,6 +40,77 @@ enum class ExecutionRoute(val label: String) {
     Auto("Auto"),
     Local("Local"),
     Cloud("Cloud")
+}
+
+/**
+ * Three real, functional processing performance modes with distinct encoding pipelines,
+ * memory footprints, filter passes, and hardware/bitrate strategies.
+ */
+enum class ProcessingPerformanceMode(
+    val badge: String,
+    val title: String,
+    val subtitle: String,
+    val ffmpegPreset: String,
+    val bitrateMultiplier: Float,
+    val enableMotionInterpolation: Boolean,
+    val pixelFilterStep: Int
+) {
+    Lite(
+        badge = "LITE",
+        title = "Lite Mode",
+        subtitle = "Fastest speed & battery saver • Direct HW pass",
+        ffmpegPreset = "veryfast",
+        bitrateMultiplier = 0.85f,
+        enableMotionInterpolation = false,
+        pixelFilterStep = 4
+    ),
+    Elite(
+        badge = "ELITE",
+        title = "Elite Mode",
+        subtitle = "Balanced speed & studio quality • HW + CFR lock",
+        ffmpegPreset = "medium",
+        bitrateMultiplier = 1.00f,
+        enableMotionInterpolation = true,
+        pixelFilterStep = 2
+    ),
+    Max(
+        badge = "MAX",
+        title = "Max Mode",
+        subtitle = "Maximum detail, 1×1 luma unsharp & 1.25× bitrate headroom",
+        ffmpegPreset = "slow",
+        bitrateMultiplier = 1.25f,
+        enableMotionInterpolation = true,
+        pixelFilterStep = 1
+    );
+
+    val badgeLabel: String
+        get() = badge
+}
+
+/**
+ * Aspect ratio & framing mode supporting automatic original preservation as well as
+ * optional manual framing ratios without stretching or distorting pixels.
+ */
+enum class AspectRatioMode(
+    val label: String,
+    val description: String,
+    val ratioValue: Double?
+) {
+    Original("Original", "Preserve exact source aspect ratio", null),
+    Vertical9x16("9:16", "Portrait Vertical (Reels / TikTok / Shorts)", 9.0 / 16.0),
+    Widescreen16x9("16:9", "Landscape Widescreen (YouTube / Cinema)", 16.0 / 9.0),
+    Square1x1("1:1", "Square Feed Format", 1.0),
+    Classic4x3("4:3", "Classic Landscape 4:3", 4.0 / 3.0),
+    Portrait3x4("3:4", "Portrait 3:4", 3.0 / 4.0),
+    Ultrawide21x9("21:9", "Anamorphic Ultrawide", 21.0 / 9.0);
+
+    val shortLabel: String
+        get() = label
+
+    companion object {
+        fun fromLabel(label: String): AspectRatioMode =
+            entries.firstOrNull { it.label.equals(label, ignoreCase = true) } ?: Original
+    }
 }
 
 enum class CinematicColorProfile(
@@ -91,7 +163,7 @@ enum class SocialMediaPreset(
 ) {
     TikTok(
         title = "TikTok",
-        subtitle = "1080 × 1920 • 60 FPS",
+        subtitle = "1080p • 60 FPS",
         resolution = "1080p",
         width = 1080,
         height = 1920,
@@ -104,7 +176,7 @@ enum class SocialMediaPreset(
     ),
     InstagramReels(
         title = "Instagram Reels",
-        subtitle = "1080 × 1920 • 60 FPS",
+        subtitle = "1080p • 60 FPS",
         resolution = "1080p",
         width = 1080,
         height = 1920,
@@ -117,7 +189,7 @@ enum class SocialMediaPreset(
     ),
     YouTubeShorts(
         title = "YouTube Shorts",
-        subtitle = "1080 × 1920 • 60 FPS",
+        subtitle = "1080p • 60 FPS",
         resolution = "1080p",
         width = 1080,
         height = 1920,
@@ -130,7 +202,7 @@ enum class SocialMediaPreset(
     ),
     YouTube4KMaster(
         title = "YouTube 4K UHD",
-        subtitle = "3840 × 2160 • 60 FPS",
+        subtitle = "4K UHD • 60 FPS",
         resolution = "4K",
         width = 3840,
         height = 2160,
@@ -143,7 +215,7 @@ enum class SocialMediaPreset(
     ),
     WhatsAppHdStatus(
         title = "WhatsApp Status HD",
-        subtitle = "1080 × 1920 • 30 FPS",
+        subtitle = "1080p • 30 FPS",
         resolution = "1080p",
         width = 1080,
         height = 1920,
@@ -156,7 +228,7 @@ enum class SocialMediaPreset(
     ),
     TwitterXStudio(
         title = "X / Twitter Studio",
-        subtitle = "1920 × 1080 • 60 FPS",
+        subtitle = "1080p • 60 FPS",
         resolution = "1080p",
         width = 1920,
         height = 1080,
@@ -177,10 +249,12 @@ data class DeviceHardwareCapabilities(
     val maxHardwareFps4k: Int = 60,
     val supportedCodecs: List<String> = listOf("H.264", "H.265"),
     val hardwareEncoderNames: List<String> = emptyList(),
+    val hardwareDecoderNames: List<String> = emptyList(),
     val maxSupportedBitrateKbps: Int = 80000,
     val supportsHdrDisplay: Boolean = false,
     val recommendedFps: Int = 60,
-    val recommendedResolution: String = "1080p"
+    val recommendedResolution: String = "1080p",
+    val recommendedPerformanceMode: ProcessingPerformanceMode = ProcessingPerformanceMode.Elite
 )
 
 data class VideoMetadata(
@@ -206,18 +280,24 @@ data class VideoMetadata(
     val containerFormat: String = "MP4",
     val isVfr: Boolean = false
 ) {
+    val normalizedRotation: Int
+        get() = ((rotationDegrees % 360) + 360) % 360
+
     val isPortrait: Boolean
-        get() = if (rotationDegrees == 90 || rotationDegrees == 270) width > height else height > width
+        get() = displayHeight > displayWidth
 
     val displayWidth: Int
-        get() = if (rotationDegrees == 90 || rotationDegrees == 270) height else width
+        get() = if (normalizedRotation == 90 || normalizedRotation == 270) height else width
 
     val displayHeight: Int
-        get() = if (rotationDegrees == 90 || rotationDegrees == 270) width else height
+        get() = if (normalizedRotation == 90 || normalizedRotation == 270) width else height
+
+    val displayAspectRatio: Float
+        get() = if (displayHeight > 0) displayWidth.toFloat() / displayHeight.toFloat() else 16f / 9f
 
     val resolutionLabel: String
         get() {
-            val shortSide = minOf(width, height)
+            val shortSide = minOf(displayWidth, displayHeight)
             return when {
                 shortSide >= 2160 -> "4K"
                 shortSide >= 1440 -> "2K"
@@ -236,9 +316,28 @@ data class VideoMetadata(
     val aspectRatioLabel: String
         get() {
             if (displayWidth <= 0 || displayHeight <= 0) return "16:9"
-            fun gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)
-            val g = gcd(displayWidth, displayHeight)
-            return "${displayWidth / g}:${displayHeight / g}"
+            val r = displayWidth.toDouble() / displayHeight.toDouble()
+            return when {
+                abs(r - 9.0 / 16.0) < 0.03 -> "9:16"
+                abs(r - 16.0 / 9.0) < 0.03 -> "16:9"
+                abs(r - 1.0) < 0.03 -> "1:1"
+                abs(r - 4.0 / 3.0) < 0.03 -> "4:3"
+                abs(r - 3.0 / 4.0) < 0.03 -> "3:4"
+                abs(r - 21.0 / 9.0) < 0.05 -> "21:9"
+                else -> {
+                    fun gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)
+                    val g = gcd(displayWidth, displayHeight).coerceAtLeast(1)
+                    "${displayWidth / g}:${displayHeight / g}"
+                }
+            }
+        }
+
+    val orientationCategoryLabel: String
+        get() = when {
+            abs(displayWidth - displayHeight) <= 16 -> "Square ($aspectRatioLabel)"
+            displayHeight > displayWidth -> "Portrait ($aspectRatioLabel)"
+            displayWidth.toFloat() / displayHeight.toFloat() >= 2.1f -> "Ultrawide ($aspectRatioLabel)"
+            else -> "Landscape ($aspectRatioLabel)"
         }
 }
 
@@ -259,7 +358,10 @@ data class EnhancementAdjustments(
     val denoise: Int = 10,
     val deinterlace: Boolean = false,
     val cinematicProfile: CinematicColorProfile = CinematicColorProfile.Neutral,
+    // Orientation & Aspect Ratio Preservation / Framing
     val cropRatio: String = "Original",
+    val aspectRatioMode: AspectRatioMode = AspectRatioMode.Original,
+    val scaleToFillCrop: Boolean = false,
     val rotationDegrees: Int = 0
 ) {
     fun isDefault(): Boolean =
@@ -268,7 +370,8 @@ data class EnhancementAdjustments(
             gamma == 1.0f && tint == 0 &&
             sharpness == 0 && denoise == 0 && !deinterlace &&
             cinematicProfile == CinematicColorProfile.Neutral &&
-            cropRatio == "Original" && rotationDegrees == 0
+            cropRatio == "Original" && aspectRatioMode == AspectRatioMode.Original &&
+            rotationDegrees == 0
 
     companion object {
         val Neutral = EnhancementAdjustments(
@@ -287,6 +390,8 @@ data class EnhancementAdjustments(
             deinterlace = false,
             cinematicProfile = CinematicColorProfile.Neutral,
             cropRatio = "Original",
+            aspectRatioMode = AspectRatioMode.Original,
+            scaleToFillCrop = false,
             rotationDegrees = 0
         )
     }
@@ -299,6 +404,7 @@ data class ExportConfiguration(
     val bitrateMode: String = "Auto", // "Auto", "Custom"
     val customBitrateKbps: Int = 14000,
     val containerFormat: String = "MP4", // "MP4", "MOV", "MKV"
+    val performanceMode: ProcessingPerformanceMode = ProcessingPerformanceMode.Elite,
     val selectedSocialPreset: SocialMediaPreset = SocialMediaPreset.TikTok,
     val socialOptimizationEnabled: Boolean = true, // CFR lock, BT.709, faststart, platform ceiling
     // Advanced Export / HQ Encoder Controls
@@ -319,8 +425,8 @@ data class ExportConfiguration(
     val hqEncoderPresetName: String = "HQ Standard"
 ) {
     /**
-     * Computes the exact target video bitrate in kbps for the selected resolution, FPS, and codec.
-     * In Export / Enhance mode, respects the full quality bitrate without unexpected down-scaling.
+     * Computes the exact target video bitrate in kbps for the selected resolution, FPS, codec,
+     * and ProcessingPerformanceMode (Lite / Elite / Max).
      */
     fun effectiveBitrateKbps(isCompressionWorkflow: Boolean = false): Int {
         if (bitrateMode == "Custom") return customBitrateKbps.coerceIn(500, 160000)
@@ -344,26 +450,42 @@ data class ExportConfiguration(
             "AV1" -> 0.70f
             else -> 1.0f
         }
-        val modeFactor = if (isCompressionWorkflow) compressionMode.bitrateFactor else 1.0f
+        val modeFactor = if (isCompressionWorkflow) {
+            compressionMode.bitrateFactor * performanceMode.bitrateMultiplier
+        } else {
+            performanceMode.bitrateMultiplier
+        }
         return (base1080p30 * fpsMultiplier * codecMultiplier * modeFactor).roundToInt().coerceIn(800, 160000)
     }
 
     /**
      * Computes the exact output (width, height) in pixels preserving source aspect orientation
-     * (Portrait vs Landscape) and aligning to 16-pixel macroblock boundaries for hardware encoders.
+     * (Portrait 9:16, Landscape 16:9, Square 1:1, 4:3, 3:4, Ultrawide, or custom),
+     * accounting for any manual user rotation (0°, 90°, 180°, 270°) and optional aspect ratio mode
+     * without ever stretching or squashing video frames.
      */
-    fun targetDimensionsPx(sourceWidth: Int = 1920, sourceHeight: Int = 1080): Pair<Int, Int> {
+    fun targetDimensionsPx(
+        sourceWidth: Int = 1920,
+        sourceHeight: Int = 1080,
+        manualRotationDegrees: Int = 0,
+        aspectRatioMode: AspectRatioMode = AspectRatioMode.Original
+    ): Pair<Int, Int> {
         val safeSrcW = if (sourceWidth > 0) sourceWidth else 1920
         val safeSrcH = if (sourceHeight > 0) sourceHeight else 1080
-        val isPortrait = safeSrcH > safeSrcW
-        val aspect = safeSrcW.toDouble() / safeSrcH.toDouble()
+
+        val normManualRot = ((manualRotationDegrees % 360) + 360) % 360
+        val uprightW = if (normManualRot == 90 || normManualRot == 270) safeSrcH else safeSrcW
+        val uprightH = if (normManualRot == 90 || normManualRot == 270) safeSrcW else safeSrcH
+
+        val targetAspect = aspectRatioMode.ratioValue ?: (uprightW.toDouble() / uprightH.toDouble())
+        val isPortrait = targetAspect < 1.0
 
         val targetShortSide = when (resolution) {
             "720p" -> 720
             "1080p" -> 1080
             "2K" -> 1440
             "4K" -> 2160
-            "Original" -> minOf(safeSrcW, safeSrcH)
+            "Original" -> minOf(uprightW, uprightH)
             else -> 1080
         }
 
@@ -371,13 +493,13 @@ data class ExportConfiguration(
         val rawH: Int
         if (isPortrait) {
             rawW = targetShortSide
-            rawH = (targetShortSide / aspect).roundToInt()
+            rawH = (targetShortSide / targetAspect).roundToInt()
         } else {
             rawH = targetShortSide
-            rawW = (targetShortSide * aspect).roundToInt()
+            rawW = (targetShortSide * targetAspect).roundToInt()
         }
 
-        // Align to 2-pixel even boundaries so 1080p stays exact 1920×1080 / 1080×1920
+        // Align to 2-pixel even boundaries so 1080p stays exact 1920×1080 / 1080×1920 / 1080×1080
         val alignedW = ((rawW + 1) / 2 * 2).coerceAtLeast(320)
         val alignedH = ((rawH + 1) / 2 * 2).coerceAtLeast(320)
         return alignedW to alignedH
@@ -422,7 +544,7 @@ data class JobItem(
     val operationType: String,
     val executionRoute: String,
     val configSummary: String,
-    val status: String, // waiting, uploading, queued, processing, downloading, completed, failed, cancelled
+    val status: String, // queued, processing, paused, completed, failed, cancelled
     val progressPercent: Int,
     val errorCode: String? = null,
     val errorMessage: String? = null,

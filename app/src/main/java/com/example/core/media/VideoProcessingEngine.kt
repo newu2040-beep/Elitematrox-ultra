@@ -7,6 +7,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.hardware.display.DisplayManager
 import android.media.Image
 import android.media.MediaCodec
@@ -49,10 +50,12 @@ import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.VideoEncoderSettings
 import com.example.R
+import com.example.domain.model.AspectRatioMode
 import com.example.domain.model.CinematicColorProfile
 import com.example.domain.model.DeviceHardwareCapabilities
 import com.example.domain.model.EnhancementAdjustments
 import com.example.domain.model.ExportConfiguration
+import com.example.domain.model.ProcessingPerformanceMode
 import com.example.domain.model.VideoMetadata
 import java.io.File
 import java.io.FileInputStream
@@ -66,7 +69,9 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 
@@ -89,6 +94,8 @@ data class ProcessedVideoOutput(
     val containerFormat: String,
     val durationMs: Long,
     val ffmpegCommandUsed: String,
+    val performanceMode: ProcessingPerformanceMode = ProcessingPerformanceMode.Elite,
+    val elapsedTimeMs: Long = 0L,
     val sourceMetadata: VideoMetadata? = null,
     val verifiedOutputMetadata: VideoMetadata? = null,
     val galleryUri: Uri? = null,
@@ -99,7 +106,7 @@ object VideoProcessingEngine {
 
     /**
      * Detects the phone's real display refresh rate (Hz), supported display modes, and hardware
-     * MediaCodec video encoder capabilities (supported FPS, resolutions, and codecs).
+     * MediaCodec video encoder & decoder capabilities (supported FPS, resolutions, and codecs).
      */
     fun detectDeviceCapabilities(context: Context): DeviceHardwareCapabilities {
         var currentRefreshHz = 60
@@ -124,39 +131,44 @@ object VideoProcessingEngine {
 
         val supportedCodecs = mutableListOf("H.264")
         val encoderNames = mutableListOf<String>()
+        val decoderNames = mutableListOf<String>()
         var maxFps1080p = 60
         var maxFps4k = 30
 
         runCatching {
-            val codecInfos = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.filter { it.isEncoder }
-            for (info in codecInfos) {
+            val allCodecs = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos
+            for (info in allCodecs) {
                 val types = info.supportedTypes.map { it.lowercase() }
-                if (types.any { it.startsWith("video/") }) {
-                    encoderNames.add(info.name)
-                }
-                if (types.any { it.contains("hevc") } && "H.265" !in supportedCodecs) {
-                    supportedCodecs.add("H.265")
-                }
-                if (types.any { it.contains("av01") } && "AV1" !in supportedCodecs) {
-                    supportedCodecs.add("AV1")
-                }
-                for (type in info.supportedTypes) {
-                    if (type.startsWith("video/", ignoreCase = true)) {
-                        runCatching {
-                            val caps = info.getCapabilitiesForType(type)?.videoCapabilities
-                            if (caps != null) {
-                                val fps1080 = runCatching {
-                                    caps.getSupportedFrameRatesFor(1920, 1080).upper.toInt()
-                                }.getOrElse { caps.supportedFrameRates.upper.toInt() }
-                                maxFps1080p = max(maxFps1080p, fps1080.coerceIn(30, 240))
+                if (!types.any { it.startsWith("video/") }) continue
 
-                                val fps4k = runCatching {
-                                    caps.getSupportedFrameRatesFor(3840, 2160).upper.toInt()
-                                }.getOrDefault(30)
-                                maxFps4k = max(maxFps4k, fps4k.coerceIn(24, 120))
+                if (info.isEncoder) {
+                    encoderNames.add(info.name)
+                    if (types.any { it.contains("hevc") } && "H.265" !in supportedCodecs) {
+                        supportedCodecs.add("H.265")
+                    }
+                    if (types.any { it.contains("av01") } && "AV1" !in supportedCodecs) {
+                        supportedCodecs.add("AV1")
+                    }
+                    for (type in info.supportedTypes) {
+                        if (type.startsWith("video/", ignoreCase = true)) {
+                            runCatching {
+                                val caps = info.getCapabilitiesForType(type)?.videoCapabilities
+                                if (caps != null) {
+                                    val fps1080 = runCatching {
+                                        caps.getSupportedFrameRatesFor(1920, 1080).upper.toInt()
+                                    }.getOrElse { caps.supportedFrameRates.upper.toInt() }
+                                    maxFps1080p = max(maxFps1080p, fps1080.coerceIn(30, 240))
+
+                                    val fps4k = runCatching {
+                                        caps.getSupportedFrameRatesFor(3840, 2160).upper.toInt()
+                                    }.getOrDefault(30)
+                                    maxFps4k = max(maxFps4k, fps4k.coerceIn(24, 120))
+                                }
                             }
                         }
                     }
+                } else {
+                    decoderNames.add(info.name)
                 }
             }
         }
@@ -171,6 +183,13 @@ object VideoProcessingEngine {
             else -> 30
         }
 
+        val runtimeCores = Runtime.getRuntime().availableProcessors()
+        val recommendedMode = when {
+            runtimeCores >= 8 && maxFps4k >= 60 -> ProcessingPerformanceMode.Max
+            runtimeCores >= 6 -> ProcessingPerformanceMode.Elite
+            else -> ProcessingPerformanceMode.Lite
+        }
+
         return DeviceHardwareCapabilities(
             displayRefreshRateHz = currentRefreshHz,
             supportedDisplayModesHz = displayModesHz.sorted(),
@@ -179,16 +198,18 @@ object VideoProcessingEngine {
             maxHardwareFps4k = max(maxFps4k, 60),
             supportedCodecs = supportedCodecs.distinct(),
             hardwareEncoderNames = encoderNames.distinct().take(6),
+            hardwareDecoderNames = decoderNames.distinct().take(6),
             supportsHdrDisplay = supportsHdrDisplay,
             recommendedFps = recommendedFps,
-            recommendedResolution = if (maxFps4k >= 60) "1080p" else "1080p"
+            recommendedResolution = "1080p",
+            recommendedPerformanceMode = recommendedMode
         )
     }
 
     /**
      * Inspects a real video URI using MediaMetadataRetriever + MediaExtractor (FFprobe equivalent on Android).
-     * Measures actual frame rate from video sample presentation timestamps when needed so Gallery/Exporter
-     * verification is 100% accurate.
+     * Correctly reads rotation metadata (0°, 90°, 180°, 270°) from both container and track format,
+     * and measures actual frame rate from video sample presentation timestamps.
      */
     suspend fun inspectVideo(context: Context, uri: Uri): Result<VideoMetadata> = withContext(Dispatchers.IO) {
         runCatching {
@@ -233,7 +254,7 @@ object VideoProcessingEngine {
                 val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
                 val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 1920
                 val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 1080
-                val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                var rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
                 val metadataBitrateBps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull() ?: 0L
                 val captureFps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toFloatOrNull()
                 val hasAudioStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO)
@@ -269,6 +290,9 @@ object VideoProcessingEngine {
                                 mime.contains("av01") -> "AV1"
                                 mime.contains("vp9") -> "VP9"
                                 else -> "H.264 / AVC"
+                            }
+                            if (rotation == 0 && format.containsKey(MediaFormat.KEY_ROTATION)) {
+                                rotation = runCatching { format.getInteger(MediaFormat.KEY_ROTATION) }.getOrDefault(0)
                             }
                             if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
                                 detectedFps = runCatching { format.getInteger(MediaFormat.KEY_FRAME_RATE).toFloat() }
@@ -327,6 +351,7 @@ object VideoProcessingEngine {
                 }
 
                 if (detectedFps <= 0f) detectedFps = 30f
+                val normalizedRotation = ((rotation % 360) + 360) % 360
 
                 val computedBitrateBps = if (durationMs > 0 && fileSize > 0) {
                     (fileSize * 8L * 1000L) / durationMs
@@ -353,7 +378,7 @@ object VideoProcessingEngine {
                     audioBitrateKbps = audioBitrateKbps,
                     audioChannels = audioChannels,
                     pixelFormat = if (isHdr) "yuv420p10le" else "yuv420p",
-                    rotationDegrees = rotation,
+                    rotationDegrees = normalizedRotation,
                     streamCount = trackCount,
                     hasAudio = audioCodec != "None",
                     isHdr = isHdr,
@@ -374,8 +399,16 @@ object VideoProcessingEngine {
 
     /**
      * Extracts a real bitmap frame from a video URI.
+     * MediaMetadataRetriever automatically applies container rotation metadata on Android.
+     * If [manualRotationDegrees] is non-zero, applies the user's additional manual rotation
+     * without double-rotating the container metadata.
      */
-    suspend fun extractThumbnail(context: Context, uri: Uri, timeUs: Long = 500_000L): Bitmap? = withContext(Dispatchers.IO) {
+    suspend fun extractThumbnail(
+        context: Context,
+        uri: Uri,
+        timeUs: Long = 500_000L,
+        manualRotationDegrees: Int = 0
+    ): Bitmap? = withContext(Dispatchers.IO) {
         val retriever = MediaMetadataRetriever()
         try {
             if (uri.scheme == "file") {
@@ -383,8 +416,15 @@ object VideoProcessingEngine {
             } else {
                 retriever.setDataSource(context, uri)
             }
-            retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            val rawBitmap = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 ?: retriever.frameAtTime
+            val normManual = ((manualRotationDegrees % 360) + 360) % 360
+            if (rawBitmap != null && normManual != 0) {
+                val matrix = Matrix().apply { postRotate(normManual.toFloat()) }
+                Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+            } else {
+                rawBitmap
+            }
         } catch (_: Exception) {
             null
         } finally {
@@ -401,7 +441,8 @@ object VideoProcessingEngine {
 
     /**
      * Builds the deterministic FFmpeg command string for local or Cloud Run execution,
-     * reflecting all color-grading, resolution, FPS, codec, bitrate, social optimization, and audio settings.
+     * reflecting all color-grading, orientation-preserving resolution, FPS, codec, bitrate,
+     * performance mode (LITE / ELITE / MAX), social optimization, and audio settings.
      */
     fun buildFfmpegCommand(
         inputPath: String,
@@ -450,9 +491,33 @@ object VideoProcessingEngine {
             vf.add("yadif=0:-1:0")
         }
 
-        val (targetW, targetH) = exportConfig.targetDimensionsPx(sourceWidth, sourceHeight)
-        vf.add("scale=${targetW}:${targetH}:flags=lanczos")
-        vf.add("fps=${exportConfig.fps}")
+        val normManualRot = ((adjustments.rotationDegrees % 360) + 360) % 360
+        when (normManualRot) {
+            90 -> vf.add("transpose=1")
+            180 -> vf.add("transpose=2,transpose=2")
+            270 -> vf.add("transpose=2")
+        }
+
+        val (targetW, targetH) = exportConfig.targetDimensionsPx(
+            sourceWidth = sourceWidth,
+            sourceHeight = sourceHeight,
+            manualRotationDegrees = normManualRot,
+            aspectRatioMode = adjustments.aspectRatioMode
+        )
+
+        if (adjustments.scaleToFillCrop && adjustments.aspectRatioMode != AspectRatioMode.Original) {
+            vf.add("scale=${targetW}:${targetH}:force_original_aspect_ratio=increase:flags=lanczos")
+            vf.add("crop=${targetW}:${targetH}")
+        } else {
+            vf.add("scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease:flags=lanczos")
+            vf.add("pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:black")
+        }
+        vf.add("setsar=1:1")
+        if (exportConfig.performanceMode == ProcessingPerformanceMode.Max && exportConfig.fps >= 60) {
+            vf.add("minterpolate=fps=${exportConfig.fps}:mi_mode=mci")
+        } else {
+            vf.add("fps=${exportConfig.fps}")
+        }
 
         val cmd = mutableListOf("ffmpeg", "-y", "-i", inputPath)
         if (vf.isNotEmpty()) {
@@ -493,7 +558,7 @@ object VideoProcessingEngine {
         }
 
         cmd.add("-preset")
-        cmd.add(exportConfig.encoderPreset)
+        cmd.add(exportConfig.performanceMode.ffmpegPreset)
         cmd.add("-pix_fmt")
         cmd.add(exportConfig.pixelFormat)
         cmd.add("-c:a")
@@ -591,9 +656,7 @@ object VideoProcessingEngine {
 
                     val outBufIdx = encoder.dequeueOutputBuffer(bufferInfo, 10_000)
                     when {
-                        outBufIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> {
-                            // wait
-                        }
+                        outBufIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
                         outBufIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             trackIndex = muxer.addTrack(encoder.outputFormat)
                             muxer.start()
@@ -680,8 +743,8 @@ object VideoProcessingEngine {
      * Executes real video enhancement, compression, and encoding using AndroidX Media3 Transformer
      * for OpenGL shader color-grading & exact orientation-aware scaling, followed by a deterministic
      * Constant Frame Rate (CFR) hardware MediaCodec + MediaMuxer pass so the exported file's
-     * FPS (24, 30, 50, 60, 90, 120), resolution (720p, 1080p, 2K, 4K), and bitrate genuinely
-     * match the user's selected settings when inspected in the phone's Gallery.
+     * aspect ratio, rotation, FPS (24, 30, 50, 60, 90, 120), resolution (720p, 1080p, 2K, 4K),
+     * and bitrate genuinely match the user's selected settings when inspected in the phone's Gallery.
      */
     @OptIn(UnstableApi::class)
     suspend fun processVideo(
@@ -691,9 +754,26 @@ object VideoProcessingEngine {
         adjustments: EnhancementAdjustments,
         exportConfig: ExportConfiguration,
         isCompressionWorkflow: Boolean = false,
+        isPausedProvider: () -> Boolean = { false },
+        onDetailedProgress: ((progressPercent: Int, elapsedMs: Long, etaMs: Long, phaseLabel: String) -> Unit)? = null,
         onProgress: (Int) -> Unit
     ): Result<ProcessedVideoOutput> = withContext(Dispatchers.IO) {
         runCatching {
+            val startTimeMs = System.currentTimeMillis()
+            val perfMode = exportConfig.performanceMode
+
+            fun reportProgress(pct: Int, phase: String) {
+                val safePct = pct.coerceIn(1, 100)
+                val elapsed = (System.currentTimeMillis() - startTimeMs).coerceAtLeast(100L)
+                val eta = if (safePct in 4..99) {
+                    ((elapsed.toDouble() / safePct.toDouble()) * (100 - safePct)).toLong().coerceAtLeast(0L)
+                } else {
+                    0L
+                }
+                onProgress(safePct)
+                onDetailedProgress?.invoke(safePct, elapsed, eta, phase)
+            }
+
             val exportsDir = File(context.filesDir, "exports").apply { mkdirs() }
             val baseName = sourceMetadata.fileName.substringBeforeLast('.').ifBlank { "Nature_Video" }
             val ext = exportConfig.containerFormat.lowercase()
@@ -704,9 +784,12 @@ object VideoProcessingEngine {
             val stage1File = File(exportsDir, "stage1_${System.currentTimeMillis()}.mp4")
             if (stage1File.exists()) stage1File.delete()
 
+            // Calculate exact orientation-preserving dimensions accounting for source rotation + manual rotation + aspectRatioMode
             val (targetWidth, targetHeight) = exportConfig.targetDimensionsPx(
                 sourceWidth = sourceMetadata.displayWidth,
-                sourceHeight = sourceMetadata.displayHeight
+                sourceHeight = sourceMetadata.displayHeight,
+                manualRotationDegrees = adjustments.rotationDegrees,
+                aspectRatioMode = adjustments.aspectRatioMode
             )
             val targetBitrateKbps = exportConfig.effectiveBitrateKbps(isCompressionWorkflow)
             val targetBitrateBps = targetBitrateKbps * 1000
@@ -722,9 +805,10 @@ object VideoProcessingEngine {
             )
             val ffmpegCommandString = ffmpegCmdList.joinToString(" ")
 
-            onProgress(5)
+            reportProgress(5, "[${perfMode.badge}] Initializing ${targetWidth}×${targetHeight} pipeline")
 
-            // Build Media3 GL video effects matching all color-grading sliders and cinematic profiles
+            // Build Media3 GL video effects matching all color-grading sliders, cinematic profiles,
+            // manual rotation, and aspect-ratio-preserving Presentation scaling.
             val videoEffects = buildGlVideoEffects(
                 adjustments = adjustments,
                 targetWidth = targetWidth,
@@ -746,7 +830,13 @@ object VideoProcessingEngine {
                 targetFps = exportConfig.fps,
                 targetBitrateBps = targetBitrateBps,
                 preferredMimeType = preferredMime,
-                onProgress = { pct -> onProgress((pct * 0.55f).roundToInt().coerceIn(6, 55)) }
+                onProgress = { pct ->
+                    val mapped = (pct * 0.55f).roundToInt().coerceIn(6, 55)
+                    reportProgress(
+                        mapped,
+                        "[${perfMode.badge}] HW Shader & Aspect-Fit (${targetWidth}×${targetHeight})"
+                    )
+                }
             )
 
             if (!transformerSuccess || !stage1Target.exists() || stage1Target.length() == 0L) {
@@ -758,8 +848,20 @@ object VideoProcessingEngine {
                     targetFps = exportConfig.fps,
                     targetBitrateBps = targetBitrateBps,
                     preferredMimeType = MimeTypes.VIDEO_H264,
-                    onProgress = { pct -> onProgress((pct * 0.55f).roundToInt().coerceIn(6, 55)) }
+                    onProgress = { pct ->
+                        val mapped = (pct * 0.55f).roundToInt().coerceIn(6, 55)
+                        reportProgress(
+                            mapped,
+                            "[${perfMode.badge}] HW AVC Shader Pass (${targetWidth}×${targetHeight})"
+                        )
+                    }
                 )
+            }
+
+            // Honour Pause state between Stage 1 and Stage 2
+            while (isPausedProvider()) {
+                currentCoroutineContext().ensureActive()
+                delay(150L)
             }
 
             val intermediateFile = if (transformerSuccess && stage1Target.exists() && stage1Target.length() > 0L) {
@@ -769,18 +871,39 @@ object VideoProcessingEngine {
                 stage1Target
             }
 
-            onProgress(58)
+            reportProgress(58, "[${perfMode.badge}] Verifying frame cadence & orientation")
 
-            // Inspect intermediate output to check whether FPS, dimensions, or sharpening/denoise require CFR pass
+            // Inspect intermediate output to determine whether Stage 2 CFR / Luma detail pass is required.
+            // - In LITE mode: if Stage 1 already produced the exact target FPS and upright dimensions, skip Stage 2!
+            // - In ELITE mode: run Stage 2 if FPS differs, dimensions/rotation differ, or sharpening/denoise is active.
+            // - In MAX mode: always run Stage 2 with 1x1 pixel luma unsharp/denoise & motion-blended CFR lock.
             val stage1Metadata = inspectVideo(context, intermediateFile.toUri()).getOrNull()
             val stage1Fps = stage1Metadata?.fps?.roundToInt() ?: sourceMetadata.fps.roundToInt()
-            val needsCfrOrFilterPass = abs(stage1Fps - exportConfig.fps) >= 1 ||
-                adjustments.sharpness > 0 ||
-                adjustments.denoise > 0 ||
-                (stage1Metadata != null && (stage1Metadata.displayWidth != targetWidth || stage1Metadata.displayHeight != targetHeight))
+            val dimensionsMatch = stage1Metadata != null &&
+                stage1Metadata.displayWidth == targetWidth &&
+                stage1Metadata.displayHeight == targetHeight &&
+                stage1Metadata.rotationDegrees == 0
+            val fpsMatches = abs(stage1Fps - exportConfig.fps) < 1
+
+            val needsCfrOrFilterPass = when (perfMode) {
+                ProcessingPerformanceMode.Lite -> !fpsMatches || !dimensionsMatch
+                ProcessingPerformanceMode.Elite -> !fpsMatches || !dimensionsMatch ||
+                    adjustments.sharpness > 0 || adjustments.denoise > 0
+                ProcessingPerformanceMode.Max -> true
+            }
 
             var cfrSuccess = false
             if (needsCfrOrFilterPass) {
+                val effectiveSharpness = when (perfMode) {
+                    ProcessingPerformanceMode.Lite -> 0
+                    ProcessingPerformanceMode.Elite -> adjustments.sharpness
+                    ProcessingPerformanceMode.Max -> max(adjustments.sharpness, 24)
+                }
+                val effectiveDenoise = when (perfMode) {
+                    ProcessingPerformanceMode.Lite -> 0
+                    ProcessingPerformanceMode.Elite -> adjustments.denoise
+                    ProcessingPerformanceMode.Max -> max(adjustments.denoise, 10)
+                }
                 cfrSuccess = runCatching {
                     transcodeWithExactCfrAndBitrate(
                         inputFile = intermediateFile,
@@ -790,12 +913,20 @@ object VideoProcessingEngine {
                         targetFps = exportConfig.fps,
                         targetBitrateBps = targetBitrateBps,
                         preferredMimeType = preferredMime,
-                        sharpness = adjustments.sharpness,
-                        denoise = adjustments.denoise,
+                        sharpness = effectiveSharpness,
+                        denoise = effectiveDenoise,
+                        pixelFilterStep = perfMode.pixelFilterStep,
+                        enableMotionInterpolation = perfMode.enableMotionInterpolation,
+                        scaleToFillCrop = adjustments.scaleToFillCrop && adjustments.aspectRatioMode != AspectRatioMode.Original,
+                        additionalRotationDegrees = if (transformerSuccess) 0 else adjustments.rotationDegrees,
                         keyframeIntervalSec = if (exportConfig.socialOptimizationEnabled) 1 else 2,
+                        isPausedProvider = isPausedProvider,
                         onProgress = { pct ->
                             val mapped = 58 + (pct * 0.38f).roundToInt()
-                            onProgress(mapped.coerceIn(58, 96))
+                            reportProgress(
+                                mapped.coerceIn(58, 96),
+                                "[${perfMode.badge}] Encoding ${targetWidth}×${targetHeight} @ ${exportConfig.fps} FPS CFR"
+                            )
                         }
                     )
                 }.getOrDefault(false)
@@ -807,7 +938,7 @@ object VideoProcessingEngine {
 
             runCatching { if (stage1File.exists()) stage1File.delete() }
 
-            onProgress(97)
+            reportProgress(97, "[${perfMode.badge}] Validating output & saving to Gallery")
 
             // Validate actual exported file metadata with MediaMetadataRetriever + MediaExtractor sample inspection
             val verifiedInspect = inspectVideo(context, outputFile.toUri()).getOrNull()
@@ -815,7 +946,7 @@ object VideoProcessingEngine {
             val origSize = sourceMetadata.sizeBytes.coerceAtLeast(1024L)
             val savedPct = (((origSize - actualOutSize).toDouble() / origSize.toDouble()) * 100.0).roundToInt()
 
-            val finalDisplayFileName = "${baseName}_${exportConfig.resolution}_${exportConfig.fps}fps.$ext"
+            val finalDisplayFileName = "${baseName}_${exportConfig.resolution}_${exportConfig.fps}fps_${perfMode.badge}.$ext"
 
             // Automatically save processed video into Device Gallery (Movies/EliteMatrix)
             val savedGalleryUri = saveVideoToGallery(
@@ -828,13 +959,15 @@ object VideoProcessingEngine {
                 durationMs = verifiedInspect?.durationMs ?: sourceMetadata.durationMs
             ).getOrNull()
 
-            onProgress(100)
+            val totalElapsedMs = (System.currentTimeMillis() - startTimeMs).coerceAtLeast(100L)
+            reportProgress(100, "Completed")
 
             val finalVerifiedMetadata = (verifiedInspect ?: sourceMetadata).copy(
                 fileName = finalDisplayFileName,
                 sizeBytes = actualOutSize,
                 width = verifiedInspect?.displayWidth ?: targetWidth,
                 height = verifiedInspect?.displayHeight ?: targetHeight,
+                rotationDegrees = verifiedInspect?.rotationDegrees ?: 0,
                 fps = verifiedInspect?.fps ?: exportConfig.fps.toFloat(),
                 bitrateKbps = verifiedInspect?.bitrateKbps ?: targetBitrateKbps,
                 audioCodec = exportConfig.audioCodec,
@@ -863,6 +996,8 @@ object VideoProcessingEngine {
                 containerFormat = exportConfig.containerFormat,
                 durationMs = finalVerifiedMetadata.durationMs,
                 ffmpegCommandUsed = ffmpegCommandString,
+                performanceMode = perfMode,
+                elapsedTimeMs = totalElapsedMs,
                 sourceMetadata = sourceMetadata,
                 verifiedOutputMetadata = finalVerifiedMetadata,
                 galleryUri = savedGalleryUri,
@@ -979,22 +1114,31 @@ object VideoProcessingEngine {
             )
         }
 
-        // 4. Rotation
-        if (adjustments.rotationDegrees != 0) {
+        // 4. Optional User Manual Rotation (Media3 already normalizes container rotation metadata automatically;
+        //    only apply ScaleAndRotateTransformation when the user explicitly requests additional rotation).
+        val normManualRot = ((adjustments.rotationDegrees % 360) + 360) % 360
+        if (normManualRot != 0) {
+            // Media3 ScaleAndRotateTransformation uses counter-clockwise degrees; convert clockwise UI rotation
+            val ccwDegrees = ((360 - normManualRot) % 360).toFloat()
             videoEffects.add(
                 ScaleAndRotateTransformation.Builder()
-                    .setRotationDegrees(adjustments.rotationDegrees.toFloat())
+                    .setRotationDegrees(ccwDegrees)
                     .build()
             )
         }
 
-        // 5. Exact Orientation-Aware Resolution Scaling
+        // 5. Exact Orientation-Aware Resolution & Aspect Ratio Scaling (never stretches or squashes)
         if (targetWidth > 0 && targetHeight > 0) {
+            val layoutMode = if (adjustments.scaleToFillCrop && adjustments.aspectRatioMode != AspectRatioMode.Original) {
+                Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+            } else {
+                Presentation.LAYOUT_SCALE_TO_FIT
+            }
             videoEffects.add(
                 Presentation.createForWidthAndHeight(
                     targetWidth,
                     targetHeight,
-                    Presentation.LAYOUT_SCALE_TO_FIT
+                    layoutMode
                 )
             )
         }
@@ -1013,9 +1157,9 @@ object VideoProcessingEngine {
 
     /**
      * Decodes [inputFile] and re-encodes at a deterministic Constant Frame Rate ([targetFps]),
-     * exact resolution ([targetWidth]x[targetHeight]), and target bitrate ([targetBitrateBps]),
-     * while performing motion-blended temporal frame interpolation for 50/60/90/120 FPS and
-     * optional spatial luma sharpening / denoise, plus lossless audio track remuxing.
+     * exact aspect-preserving resolution ([targetWidth]×[targetHeight]), and target bitrate ([targetBitrateBps]),
+     * while performing optional motion-blended temporal frame interpolation for 50/60/90/120 FPS,
+     * spatial luma sharpening / denoise, rotation normalization, and lossless audio track remuxing.
      */
     private fun transcodeWithExactCfrAndBitrate(
         inputFile: File,
@@ -1027,7 +1171,12 @@ object VideoProcessingEngine {
         preferredMimeType: String,
         sharpness: Int,
         denoise: Int,
+        pixelFilterStep: Int,
+        enableMotionInterpolation: Boolean,
+        scaleToFillCrop: Boolean,
+        additionalRotationDegrees: Int,
         keyframeIntervalSec: Int,
+        isPausedProvider: () -> Boolean,
         onProgress: (Int) -> Unit
     ): Boolean {
         val extractor = MediaExtractor()
@@ -1057,6 +1206,11 @@ object VideoProcessingEngine {
 
         val srcWidth = inputVideoFormat.getInteger(MediaFormat.KEY_WIDTH)
         val srcHeight = inputVideoFormat.getInteger(MediaFormat.KEY_HEIGHT)
+        val containerRotation = if (inputVideoFormat.containsKey(MediaFormat.KEY_ROTATION)) {
+            runCatching { inputVideoFormat.getInteger(MediaFormat.KEY_ROTATION) }.getOrDefault(0)
+        } else 0
+        val totalRotationDegrees = (((containerRotation + additionalRotationDegrees) % 360) + 360) % 360
+
         val durationUs = if (inputVideoFormat.containsKey(MediaFormat.KEY_DURATION)) {
             inputVideoFormat.getLong(MediaFormat.KEY_DURATION).coerceAtLeast(500_000L)
         } else {
@@ -1091,11 +1245,11 @@ object VideoProcessingEngine {
         encoder.start()
 
         val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        // Output frames are rotated into upright display pixels, so container rotation is always 0° (prevents double rotation)
+        muxer.setOrientationHint(0)
         var muxerVideoTrack = -1
         var muxerAudioTrack = -1
         var muxerStarted = false
-
-        val pendingAudioSamples = mutableListOf<Pair<ByteBuffer, MediaCodec.BufferInfo>>()
 
         extractor.selectTrack(videoTrackIndex)
 
@@ -1114,6 +1268,10 @@ object VideoProcessingEngine {
 
         try {
             while (!encoderOutputDone) {
+                while (isPausedProvider()) {
+                    Thread.sleep(120L)
+                }
+
                 // 1. Feed compressed samples from MediaExtractor into Decoder
                 if (!extractorDone) {
                     val decInIdx = decoder.dequeueInputBuffer(5_000)
@@ -1149,11 +1307,14 @@ object VideoProcessingEngine {
                             val extracted = if (outImage != null) {
                                 val frame = extractScaledYuvFrameFromImage(
                                     image = outImage,
+                                    rotationDegrees = totalRotationDegrees,
                                     targetWidth = encWidth,
                                     targetHeight = encHeight,
+                                    scaleToFillCrop = scaleToFillCrop,
                                     ptsUs = decBufferInfo.presentationTimeUs.coerceAtLeast(0L),
                                     sharpness = sharpness,
-                                    denoise = denoise
+                                    denoise = denoise,
+                                    pixelFilterStep = pixelFilterStep
                                 )
                                 outImage.close()
                                 frame
@@ -1186,11 +1347,15 @@ object VideoProcessingEngine {
                                 if (!isEos && targetPtsUs > latest.ptsUs) break
                                 if (isEos && targetPtsUs > max(latest.ptsUs, durationUs)) break
 
-                                val blendFrame = interpolateYuvFrames(
-                                    prev = prevDecodedFrame ?: latest,
-                                    curr = latest,
-                                    targetPtsUs = targetPtsUs
-                                )
+                                val blendFrame = if (enableMotionInterpolation) {
+                                    interpolateYuvFrames(
+                                        prev = prevDecodedFrame ?: latest,
+                                        curr = latest,
+                                        targetPtsUs = targetPtsUs
+                                    )
+                                } else {
+                                    latest
+                                }
                                 queueYuvFrameToEncoder(
                                     encoder = encoder,
                                     encoderFormat = activeEncoderFormat,
@@ -1220,7 +1385,6 @@ object VideoProcessingEngine {
 
                         if (isEos) {
                             decoderDone = true
-                            // Signal EOS to encoder
                             var eosQueued = false
                             var retries = 0
                             while (!eosQueued && retries < 40) {
@@ -1388,18 +1552,30 @@ object VideoProcessingEngine {
         return YuvFrameBuffer(curr.width, curr.height, yOut, uOut, vOut, targetPtsUs)
     }
 
+    /**
+     * Extracts and scales a decoded YUV420 frame while:
+     * 1. Applying any residual [rotationDegrees] (0°, 90°, 180°, 270°) into upright display space.
+     * 2. Preserving exact aspect ratio via uniform scaling (center-fit with neutral BT.709 black bars
+     *    or center-crop when [scaleToFillCrop] is true) — never stretching X and Y independently!
+     */
     private fun extractScaledYuvFrameFromImage(
         image: Image,
+        rotationDegrees: Int,
         targetWidth: Int,
         targetHeight: Int,
+        scaleToFillCrop: Boolean,
         ptsUs: Long,
         sharpness: Int,
-        denoise: Int
+        denoise: Int,
+        pixelFilterStep: Int
     ): YuvFrameBuffer {
-        val srcW = image.width
-        val srcH = image.height
-        val planes = image.planes
+        val rawSrcW = image.width
+        val rawSrcH = image.height
+        val normRot = ((rotationDegrees % 360) + 360) % 360
+        val uprightSrcW = if (normRot == 90 || normRot == 270) rawSrcH else rawSrcW
+        val uprightSrcH = if (normRot == 90 || normRot == 270) rawSrcW else rawSrcH
 
+        val planes = image.planes
         val yPlane = planes[0].buffer
         val yRowStride = planes[0].rowStride
         val yPixelStride = planes[0].pixelStride
@@ -1418,44 +1594,136 @@ object VideoProcessingEngine {
         val uBytes = ByteArray(uvWidth * uvHeight)
         val vBytes = ByteArray(uvWidth * uvHeight)
 
-        val sameSize = (srcW == targetWidth && srcH == targetHeight)
+        val sameSizeUnrotated = (normRot == 0 && uprightSrcW == targetWidth && uprightSrcH == targetHeight)
 
-        if (sameSize && yPixelStride == 1) {
+        if (sameSizeUnrotated && yPixelStride == 1) {
             for (row in 0 until targetHeight) {
                 yPlane.position(row * yRowStride)
                 yPlane.get(yBytes, row * targetWidth, targetWidth)
             }
+            val srcUvW = rawSrcW / 2
+            val srcUvH = rawSrcH / 2
+            for (ty in 0 until uvHeight) {
+                val sy = (ty * srcUvH) / uvHeight
+                val uRowBase = sy * uRowStride
+                val vRowBase = sy * vRowStride
+                val outUvBase = ty * uvWidth
+                for (tx in 0 until uvWidth) {
+                    val sx = (tx * srcUvW) / uvWidth
+                    val uIdx = uRowBase + sx * uPixelStride
+                    val vIdx = vRowBase + sx * vPixelStride
+                    uBytes[outUvBase + tx] = if (uIdx < uPlane.limit()) uPlane.get(uIdx) else 128.toByte()
+                    vBytes[outUvBase + tx] = if (vIdx < vPlane.limit()) vPlane.get(vIdx) else 128.toByte()
+                }
+            }
         } else {
-            for (ty in 0 until targetHeight) {
-                val sy = (ty * srcH) / targetHeight
-                val rowBase = sy * yRowStride
+            // Initialize neutral studio black (Y=16, U=128, V=128) for any letterbox/pillarbox bars
+            yBytes.fill(16.toByte())
+            uBytes.fill(128.toByte())
+            vBytes.fill(128.toByte())
+
+            // Compute uniform scale factor preserving aspect ratio (never stretches X and Y differently)
+            val scaleX = targetWidth.toDouble() / uprightSrcW.toDouble()
+            val scaleY = targetHeight.toDouble() / uprightSrcH.toDouble()
+            val uniformScale = if (scaleToFillCrop) max(scaleX, scaleY) else min(scaleX, scaleY)
+
+            val scaledContentW = (uprightSrcW * uniformScale).roundToInt().coerceAtLeast(2)
+            val scaledContentH = (uprightSrcH * uniformScale).roundToInt().coerceAtLeast(2)
+            val offsetX = (targetWidth - scaledContentW) / 2
+            val offsetY = (targetHeight - scaledContentH) / 2
+
+            val yStart = max(0, offsetY)
+            val yEnd = min(targetHeight, offsetY + scaledContentH)
+            val xStart = max(0, offsetX)
+            val xEnd = min(targetWidth, offsetX + scaledContentW)
+
+            val yLimit = yPlane.limit()
+            val uLimit = uPlane.limit()
+            val vLimit = vPlane.limit()
+
+            for (ty in yStart until yEnd) {
+                val uprightY = (((ty - offsetY) * uprightSrcH) / scaledContentH).coerceIn(0, uprightSrcH - 1)
                 val outRowBase = ty * targetWidth
-                for (tx in 0 until targetWidth) {
-                    val sx = (tx * srcW) / targetWidth
-                    val idx = rowBase + sx * yPixelStride
-                    yBytes[outRowBase + tx] = if (idx < yPlane.limit()) yPlane.get(idx) else 16
+                for (tx in xStart until xEnd) {
+                    val uprightX = (((tx - offsetX) * uprightSrcW) / scaledContentW).coerceIn(0, uprightSrcW - 1)
+                    val rawX: Int
+                    val rawY: Int
+                    when (normRot) {
+                        90 -> {
+                            rawX = uprightY
+                            rawY = rawSrcH - 1 - uprightX
+                        }
+                        180 -> {
+                            rawX = rawSrcW - 1 - uprightX
+                            rawY = rawSrcH - 1 - uprightY
+                        }
+                        270 -> {
+                            rawX = rawSrcW - 1 - uprightY
+                            rawY = uprightX
+                        }
+                        else -> {
+                            rawX = uprightX
+                            rawY = uprightY
+                        }
+                    }
+                    val yIdx = rawY * yRowStride + rawX * yPixelStride
+                    if (yIdx in 0 until yLimit) {
+                        yBytes[outRowBase + tx] = yPlane.get(yIdx)
+                    }
+                }
+            }
+
+            val uvYStart = max(0, yStart / 2)
+            val uvYEnd = min(uvHeight, (yEnd + 1) / 2)
+            val uvXStart = max(0, xStart / 2)
+            val uvXEnd = min(uvWidth, (xEnd + 1) / 2)
+
+            for (ty in uvYStart until uvYEnd) {
+                val fullTy = ty * 2
+                val uprightY = (((fullTy - offsetY) * uprightSrcH) / scaledContentH).coerceIn(0, uprightSrcH - 1)
+                val outUvBase = ty * uvWidth
+                for (tx in uvXStart until uvXEnd) {
+                    val fullTx = tx * 2
+                    val uprightX = (((fullTx - offsetX) * uprightSrcW) / scaledContentW).coerceIn(0, uprightSrcW - 1)
+                    val rawX: Int
+                    val rawY: Int
+                    when (normRot) {
+                        90 -> {
+                            rawX = uprightY
+                            rawY = rawSrcH - 1 - uprightX
+                        }
+                        180 -> {
+                            rawX = rawSrcW - 1 - uprightX
+                            rawY = rawSrcH - 1 - uprightY
+                        }
+                        270 -> {
+                            rawX = rawSrcW - 1 - uprightY
+                            rawY = uprightX
+                        }
+                        else -> {
+                            rawX = uprightX
+                            rawY = uprightY
+                        }
+                    }
+                    val rawUvX = (rawX / 2).coerceIn(0, (rawSrcW / 2) - 1)
+                    val rawUvY = (rawY / 2).coerceIn(0, (rawSrcH / 2) - 1)
+                    val uIdx = rawUvY * uRowStride + rawUvX * uPixelStride
+                    val vIdx = rawUvY * vRowStride + rawUvX * vPixelStride
+                    if (uIdx in 0 until uLimit) uBytes[outUvBase + tx] = uPlane.get(uIdx)
+                    if (vIdx in 0 until vLimit) vBytes[outUvBase + tx] = vPlane.get(vIdx)
                 }
             }
         }
 
-        val srcUvW = srcW / 2
-        val srcUvH = srcH / 2
-        for (ty in 0 until uvHeight) {
-            val sy = (ty * srcUvH) / uvHeight
-            val uRowBase = sy * uRowStride
-            val vRowBase = sy * vRowStride
-            val outUvBase = ty * uvWidth
-            for (tx in 0 until uvWidth) {
-                val sx = (tx * srcUvW) / uvWidth
-                val uIdx = uRowBase + sx * uPixelStride
-                val vIdx = vRowBase + sx * vPixelStride
-                uBytes[outUvBase + tx] = if (uIdx < uPlane.limit()) uPlane.get(uIdx) else 128.toByte()
-                vBytes[outUvBase + tx] = if (vIdx < vPlane.limit()) vPlane.get(vIdx) else 128.toByte()
-            }
-        }
-
-        val processedY = if (sharpness > 0 || denoise > 0) {
-            applyLumaSharpenAndDenoise(yBytes, targetWidth, targetHeight, sharpness, denoise)
+        val processedY = if ((sharpness > 0 || denoise > 0) && pixelFilterStep <= 2) {
+            applyLumaSharpenAndDenoise(
+                yPlane = yBytes,
+                width = targetWidth,
+                height = targetHeight,
+                sharpness = sharpness,
+                denoise = denoise,
+                stepOverride = pixelFilterStep
+            )
         } else {
             yBytes
         }
@@ -1475,12 +1743,13 @@ object VideoProcessingEngine {
         width: Int,
         height: Int,
         sharpness: Int,
-        denoise: Int
+        denoise: Int,
+        stepOverride: Int = 1
     ): ByteArray {
         val out = yPlane.copyOf()
         val sharpenStrength = (sharpness.coerceIn(0, 100) * 3) // 0..300 fixed point (/256)
         val denoiseThreshold = (denoise.coerceIn(0, 100) / 5)   // 0..20 luma threshold
-        val step = if (width * height > 1920 * 1080) 2 else 1
+        val step = if (width * height > 2560 * 1440) max(2, stepOverride) else stepOverride.coerceIn(1, 4)
 
         var y = 1
         while (y < height - 1) {
@@ -1820,7 +2089,7 @@ object VideoProcessingEngine {
 
             val notification = NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle("Processing Complete • Saved to Gallery")
+                .setContentTitle("Processing Complete (${output.performanceMode.badge}) • Saved to Gallery")
                 .setContentText(
                     "${output.fileName} (${output.width}×${output.height} • ${output.fps} FPS • ${"%.1f".format(output.bitrateKbps / 1000f)} Mbps)"
                 )

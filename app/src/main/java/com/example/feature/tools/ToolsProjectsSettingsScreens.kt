@@ -26,7 +26,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Calculate
@@ -36,7 +39,9 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Tune
@@ -45,6 +50,7 @@ import androidx.compose.material.icons.outlined.ViewInAr
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -63,6 +69,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.AppPreferencesState
@@ -85,7 +92,9 @@ import com.example.ui.theme.LocalNeumorphicColors
 import com.example.ui.theme.NeumorphicCard
 import com.example.ui.theme.NeumorphicChoicePill
 import com.example.ui.theme.NeumorphicPillButton
+import com.example.ui.theme.ProcessingPerformanceModeSelector
 import com.example.ui.theme.paletteFor
+import com.example.ui.theme.rememberResponsiveMetrics
 import com.example.viewmodel.ActiveToolModal
 import com.example.viewmodel.EliteMatrixViewModel
 import com.example.viewmodel.PrimaryScreen
@@ -116,13 +125,14 @@ fun ToolsHubScreen(
     }
 
     val neu = LocalNeumorphicColors.current
+    val metrics = rememberResponsiveMetrics()
     var showCreatePresetDialog by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .padding(horizontal = metrics.horizontalPadding, vertical = metrics.verticalPadding)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -150,20 +160,20 @@ fun ToolsHubScreen(
                 color = neu.textPrimary,
                 style = MaterialTheme.typography.headlineMedium.copy(
                     fontWeight = FontWeight.Bold,
-                    fontSize = 21.sp
+                    fontSize = 20.sp
                 )
             )
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         when (activeModal) {
             ActiveToolModal.None -> {
                 val tools = listOf(
-                    Triple("Enhance Video", "Color profiles, tone, sharpening, denoise & live filter graph", Icons.Outlined.AutoFixHigh) to {
+                    Triple("Enhance Video", "Color profiles, aspect ratio, rotation, sharpening & denoise", Icons.Outlined.AutoFixHigh) to {
                         onNavigateScreen(PrimaryScreen.EnhanceVideo)
                     },
-                    Triple("Compress Video", "Custom FPS, resolution, bitrate & Smart HQ compression", Icons.Outlined.Layers) to {
+                    Triple("Compress Video", "LITE/ELITE/MAX modes, custom FPS, resolution & Smart HQ compression", Icons.Outlined.Layers) to {
                         onOpenModal(ActiveToolModal.CompressWorkflow)
                     },
                     Triple("HQ Encoder", "Editable HQ presets for TikTok, Reels, Shorts, 120FPS & Archive", Icons.Outlined.ViewInAr) to {
@@ -172,7 +182,7 @@ fun ToolsHubScreen(
                     Triple("Custom Export", "Manual resolution, 24–120 FPS CFR, codec, audio & anti-recompression", Icons.Outlined.Tune) to {
                         onNavigateScreen(PrimaryScreen.ExportSettings)
                     },
-                    Triple("Video Inspector", "Inspect verified sample FPS, bitrate, resolution, audio & HDR tags", Icons.Outlined.Info) to {
+                    Triple("Video Inspector", "Inspect verified sample FPS, orientation, bitrate, resolution & HDR tags", Icons.Outlined.Info) to {
                         onOpenModal(ActiveToolModal.VideoInspector)
                     },
                     Triple("Preset Manager", "Create, apply, duplicate & sync custom presets", Icons.Outlined.BookmarkBorder) to {
@@ -190,9 +200,9 @@ fun ToolsHubScreen(
                     NeumorphicCard(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 12.dp),
-                        cornerRadius = 20.dp,
-                        contentPadding = PaddingValues(16.dp),
+                            .padding(bottom = 10.dp),
+                        cornerRadius = 18.dp,
+                        contentPadding = PaddingValues(13.dp),
                         onClick = action
                     ) {
                         Row(
@@ -201,8 +211,8 @@ fun ToolsHubScreen(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(RoundedCornerShape(14.dp))
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(neu.accentPrimary.copy(alpha = 0.14f)),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -210,21 +220,24 @@ fun ToolsHubScreen(
                                     imageVector = info.third,
                                     contentDescription = info.first,
                                     tint = neu.accentPrimary,
-                                    modifier = Modifier.size(24.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
-                            Spacer(modifier = Modifier.width(14.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = info.first,
                                     color = neu.textPrimary,
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = info.second,
                                     color = neu.textSecondary,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.5.sp)
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp)
                                 )
                             }
                         }
@@ -235,8 +248,8 @@ fun ToolsHubScreen(
             ActiveToolModal.VideoInspector -> {
                 NeumorphicCard(
                     modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 22.dp,
-                    contentPadding = PaddingValues(18.dp)
+                    cornerRadius = 20.dp,
+                    contentPadding = PaddingValues(14.dp)
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         if (selectedVideo == null) {
@@ -245,7 +258,7 @@ fun ToolsHubScreen(
                                 color = neu.textSecondary,
                                 style = MaterialTheme.typography.bodyMedium
                             )
-                            Spacer(modifier = Modifier.height(14.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 NeumorphicPillButton(
                                     text = "Import Video",
@@ -265,7 +278,8 @@ fun ToolsHubScreen(
                                 "File Size" to EliteMatrixViewModel.formatBytes(selectedVideo.sizeBytes),
                                 "Duration" to "${"%.2f".format(selectedVideo.durationMs / 1000.0)} sec",
                                 "Display Dimensions" to "${selectedVideo.exactDimensionsLabel} (${selectedVideo.resolutionLabel})",
-                                "Aspect Ratio" to selectedVideo.aspectRatioLabel,
+                                "Orientation & Ratio" to "${selectedVideo.orientationCategoryLabel} (${selectedVideo.aspectRatioLabel})",
+                                "Rotation Metadata" to "${selectedVideo.normalizedRotation}° (Coded ${selectedVideo.width}×${selectedVideo.height})",
                                 "Verified Frame Rate" to selectedVideo.formattedFpsLabel,
                                 "Video Bitrate" to "${selectedVideo.bitrateKbps} kbps (${"%.1f".format(selectedVideo.bitrateKbps / 1000f)} Mbps)",
                                 "Video Codec" to selectedVideo.videoCodec,
@@ -273,24 +287,23 @@ fun ToolsHubScreen(
                                 "Audio Spec" to "${selectedVideo.audioBitrateKbps} kbps • ${selectedVideo.audioSampleRateHz / 1000.0} kHz • ${selectedVideo.audioChannels}ch",
                                 "Pixel Format" to selectedVideo.pixelFormat,
                                 "Color Space / HDR" to selectedVideo.colorStandard,
-                                "Rotation" to "${selectedVideo.rotationDegrees}°",
                                 "Streams" to "${selectedVideo.streamCount} track(s)"
                             )
                             rows.forEachIndexed { idx, (k, v) ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 6.dp),
+                                        .padding(vertical = 5.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Text(k, color = neu.textSecondary, style = MaterialTheme.typography.bodyMedium)
-                                    Text(v, color = neu.textPrimary, style = MaterialTheme.typography.labelLarge)
+                                    Text(k, color = neu.textSecondary, style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp))
+                                    Text(v, color = neu.textPrimary, style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp))
                                 }
                                 if (idx < rows.lastIndex) {
                                     HorizontalDivider(color = neu.divider.copy(alpha = 0.6f))
                                 }
                             }
-                            Spacer(modifier = Modifier.height(14.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
                             NeumorphicPillButton(
                                 text = "Inspect Another Video",
                                 onClick = onImportVideo
@@ -305,14 +318,14 @@ fun ToolsHubScreen(
                     text = "+ Save Current Settings as Preset",
                     onClick = { showCreatePresetDialog = true }
                 )
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 presets.forEach { preset ->
                     NeumorphicCard(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 12.dp),
+                            .padding(bottom = 10.dp),
                         cornerRadius = 18.dp,
-                        contentPadding = PaddingValues(14.dp),
+                        contentPadding = PaddingValues(12.dp),
                         onClick = { onApplyPreset(preset) }
                     ) {
                         Row(
@@ -354,24 +367,39 @@ fun ToolsHubScreen(
 
                 NeumorphicCard(
                     modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 22.dp,
-                    contentPadding = PaddingValues(16.dp)
+                    cornerRadius = 20.dp,
+                    contentPadding = PaddingValues(14.dp)
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "1. Compression Profile",
+                            text = "1. Processing Performance Mode",
                             color = neu.textPrimary,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        ProcessingPerformanceModeSelector(
+                            selectedMode = exportConfig.performanceMode,
+                            onSelectMode = { mode ->
+                                onUpdateExportConfig { it.copy(performanceMode = mode) }
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            text = "2. Compression Profile",
+                            color = neu.textPrimary,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
                         CompressionMode.entries.forEach { mode ->
                             val selected = exportConfig.compressionMode == mode && exportConfig.bitrateMode == "Auto"
                             NeumorphicCard(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(bottom = 8.dp),
-                                cornerRadius = 16.dp,
-                                contentPadding = PaddingValues(12.dp),
+                                cornerRadius = 15.dp,
+                                contentPadding = PaddingValues(11.dp),
                                 onClick = {
                                     onUpdateExportConfig {
                                         it.copy(
@@ -396,7 +424,7 @@ fun ToolsHubScreen(
                                         Text(
                                             text = mode.description,
                                             color = neu.textSecondary,
-                                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp)
                                         )
                                     }
                                     Text(
@@ -408,9 +436,9 @@ fun ToolsHubScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         HorizontalDivider(color = neu.divider)
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         // Custom Resolution in HQ Compression Mode
                         Row(
@@ -418,7 +446,7 @@ fun ToolsHubScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "2. Target Resolution",
+                                text = "3. Target Resolution (Preserves Aspect Ratio)",
                                 color = neu.textPrimary,
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                             )
@@ -428,7 +456,7 @@ fun ToolsHubScreen(
                                 style = MaterialTheme.typography.labelLarge
                             )
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -442,7 +470,7 @@ fun ToolsHubScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         // Custom Frame Rate (24, 30, 50, 60, 90, 120 FPS) in HQ Compression Mode
                         Row(
@@ -450,7 +478,7 @@ fun ToolsHubScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "3. Target Frame Rate (CFR)",
+                                text = "4. Target Frame Rate (CFR)",
                                 color = neu.textPrimary,
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                             )
@@ -460,7 +488,7 @@ fun ToolsHubScreen(
                                 style = MaterialTheme.typography.labelLarge
                             )
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -473,7 +501,7 @@ fun ToolsHubScreen(
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -487,15 +515,15 @@ fun ToolsHubScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         // Video Codec & Custom Bitrate in HQ Compression Mode
                         Text(
-                            text = "4. Codec & Bitrate Control",
+                            text = "5. Codec & Bitrate Control",
                             color = neu.textPrimary,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -509,13 +537,13 @@ fun ToolsHubScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "Bitrate: ${"%.1f".format(compressBitrateKbps / 1000f)} Mbps (${exportConfig.bitrateMode})",
+                                text = "Bitrate: ${"%.1f".format(compressBitrateKbps / 1000f)} Mbps (${exportConfig.bitrateMode} • ${exportConfig.performanceMode.badgeLabel})",
                                 color = neu.textPrimary,
                                 style = MaterialTheme.typography.labelLarge
                             )
@@ -546,11 +574,11 @@ fun ToolsHubScreen(
                         Text(
                             text = "Estimated Output: ~${EliteMatrixViewModel.formatBytes(estOut)} at ${targetW}×${targetH} • ${exportConfig.fps} FPS",
                             color = neu.textSecondary,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp)
                         )
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
                         EmeraldPillButton(
-                            text = "Start HQ Compression (${exportConfig.resolution} • ${exportConfig.fps} FPS)",
+                            text = "Start HQ Compression (${exportConfig.performanceMode.badgeLabel} • ${exportConfig.fps} FPS)",
                             onClick = { onStartJob("compress") }
                         )
                     }
@@ -560,29 +588,42 @@ fun ToolsHubScreen(
             ActiveToolModal.HqEncoderWorkflow -> {
                 NeumorphicCard(
                     modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 22.dp,
-                    contentPadding = PaddingValues(16.dp)
+                    cornerRadius = 20.dp,
+                    contentPadding = PaddingValues(14.dp)
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Processing Performance Mode",
+                            color = neu.textPrimary,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        ProcessingPerformanceModeSelector(
+                            selectedMode = exportConfig.performanceMode,
+                            onSelectMode = { mode ->
+                                onUpdateExportConfig { it.copy(performanceMode = mode) }
+                            }
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
                         Text(
                             text = "HQ Encoder Starting Profiles",
                             color = neu.textPrimary,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "Editable quality-focused encoding configurations (locks exact CFR frame rate and BT.709 color accuracy).",
+                            text = "Editable quality-focused encoding configurations (locks exact CFR frame rate, aspect ratio, and BT.709 color accuracy).",
                             color = neu.textSecondary,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp)
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
                         BuiltInPresets.defaultHqPresets.forEach { preset ->
                             val isSelected = exportConfig.hqEncoderPresetName == preset.name
                             NeumorphicCard(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(bottom = 10.dp),
-                                cornerRadius = 16.dp,
-                                contentPadding = PaddingValues(12.dp),
+                                    .padding(bottom = 8.dp),
+                                cornerRadius = 15.dp,
+                                contentPadding = PaddingValues(11.dp),
                                 onClick = { onApplyPreset(preset) }
                             ) {
                                 Row(
@@ -599,7 +640,7 @@ fun ToolsHubScreen(
                                         Text(
                                             text = "${preset.resolution} • ${preset.fps} FPS • ${preset.codec} • ${"%.1f".format(preset.bitrateKbps / 1000f)} Mbps",
                                             color = neu.textSecondary,
-                                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp)
                                         )
                                     }
                                     Text(
@@ -612,7 +653,7 @@ fun ToolsHubScreen(
                         }
                         Spacer(modifier = Modifier.height(10.dp))
                         EmeraldPillButton(
-                            text = "Run HQ Encode Now (${exportConfig.resolution} • ${exportConfig.fps} FPS)",
+                            text = "Run HQ Encode (${exportConfig.performanceMode.badgeLabel} • ${exportConfig.resolution} • ${exportConfig.fps} FPS)",
                             onClick = { onStartJob("hq_encode") }
                         )
                     }
@@ -622,12 +663,12 @@ fun ToolsHubScreen(
             ActiveToolModal.FormatConverter -> {
                 NeumorphicCard(
                     modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 22.dp,
-                    contentPadding = PaddingValues(16.dp)
+                    cornerRadius = 20.dp,
+                    contentPadding = PaddingValues(14.dp)
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text("Target Container Format", style = MaterialTheme.typography.titleMedium, color = neu.textPrimary)
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                             listOf("MP4", "MOV", "MKV").forEach { fmt ->
                                 NeumorphicChoicePill(
@@ -637,9 +678,9 @@ fun ToolsHubScreen(
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
                         Text("Target Video Stream Codec", style = MaterialTheme.typography.titleMedium, color = neu.textPrimary)
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                             listOf("H.264", "H.265", "AV1").forEach { c ->
                                 NeumorphicChoicePill(
@@ -649,7 +690,7 @@ fun ToolsHubScreen(
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         EmeraldPillButton(
                             text = "Convert to ${exportConfig.containerFormat} (${exportConfig.codec})",
                             onClick = { onStartJob("convert") }
@@ -671,8 +712,8 @@ fun ToolsHubScreen(
 
                 NeumorphicCard(
                     modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 22.dp,
-                    contentPadding = PaddingValues(16.dp)
+                    cornerRadius = 20.dp,
+                    contentPadding = PaddingValues(14.dp)
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
@@ -686,7 +727,7 @@ fun ToolsHubScreen(
                             valueRange = 5f..600f,
                             colors = SliderDefaults.colors(activeTrackColor = neu.accentPrimary)
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = "Target File Size: ${"%.1f".format(targetSizeMb)} MB",
                             color = neu.textPrimary,
@@ -698,13 +739,13 @@ fun ToolsHubScreen(
                             valueRange = 2f..250f,
                             colors = SliderDefaults.colors(activeTrackColor = neu.accentPrimary)
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "Recommended Video Bitrate: $calculatedVideoKbps kbps (${"%.1f".format(calculatedVideoKbps / 1000f)} Mbps) + ${exportConfig.audioBitrateKbps} kbps Audio",
                             color = neu.accentPrimary,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
                         EmeraldPillButton(
                             text = "Apply $calculatedVideoKbps kbps to Export Settings",
                             onClick = {
@@ -734,11 +775,27 @@ fun ToolsHubScreen(
     }
 }
 
+/**
+ * Redesigned Projects & Queue Screen:
+ * Eliminates wasted whitespace, displays compact organized cards for both
+ * Active/Queued/Historical Jobs (with Pause, Resume, Cancel, Retry, Remove)
+ * and Completed Exports (with Play, Share, Remove).
+ */
 @Composable
 fun ProjectsHistoryScreen(
     jobs: List<JobItem>,
     exports: List<ExportItem>,
     thumbnailBitmap: Bitmap?,
+    isProcessing: Boolean = false,
+    isPaused: Boolean = false,
+    activeJobId: String? = null,
+    elapsedTimeMs: Long = 0L,
+    estimatedRemainingMs: Long = 0L,
+    onPauseActiveJob: () -> Unit = {},
+    onResumeActiveJob: () -> Unit = {},
+    onCancelActiveJob: () -> Unit = {},
+    onRetryJob: (JobItem) -> Unit = {},
+    onRemoveJob: (JobItem) -> Unit = {},
     onOpenExport: (ExportItem) -> Unit,
     onShareExport: (ExportItem) -> Unit,
     onDeleteExport: (ExportItem) -> Unit,
@@ -747,35 +804,52 @@ fun ProjectsHistoryScreen(
 ) {
     BackHandler(onBack = onBackToHome)
     val neu = LocalNeumorphicColors.current
+    val metrics = rememberResponsiveMetrics()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .padding(horizontal = metrics.horizontalPadding, vertical = metrics.verticalPadding)
     ) {
-        Text(
-            text = "Projects & Queue",
-            color = neu.textPrimary,
-            style = MaterialTheme.typography.headlineMedium.copy(
-                fontWeight = FontWeight.Bold,
-                fontSize = 22.sp
-            )
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = "Real exported video records and job history",
-            color = neu.textSecondary,
-            style = MaterialTheme.typography.bodyMedium
-        )
+        // Compact Header Row with Summary Badges & "+ Import" Button
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Projects & Queue",
+                    color = neu.textPrimary,
+                    style = MaterialTheme.typography.headlineMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp
+                    )
+                )
+                Text(
+                    text = "${exports.size} Completed • ${jobs.size} Queue Job(s)",
+                    color = neu.textSecondary,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
+                )
+            }
 
-        Spacer(modifier = Modifier.height(16.dp))
+            NeumorphicPillButton(
+                text = "+ Import Video",
+                height = 36.dp,
+                testTag = "projects_import_video_button",
+                modifier = Modifier.width(132.dp),
+                onClick = onImportNewVideo
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
 
         if (exports.isEmpty() && jobs.isEmpty()) {
             NeumorphicCard(
                 modifier = Modifier.fillMaxWidth(),
-                cornerRadius = 22.dp,
-                contentPadding = PaddingValues(20.dp)
+                cornerRadius = 20.dp,
+                contentPadding = PaddingValues(16.dp)
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -785,21 +859,21 @@ fun ProjectsHistoryScreen(
                         imageVector = Icons.Outlined.VideoFile,
                         contentDescription = null,
                         tint = neu.accentPrimary,
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(34.dp)
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "No Completed Exports Yet",
+                        text = "No Active Jobs or Exports Yet",
                         color = neu.textPrimary,
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(3.dp))
                     Text(
-                        text = "Import a video and run Enhance, Compress, or Export to create your first project.",
+                        text = "Import a video and run Enhance, Compress, or Export to populate your queue and gallery.",
                         color = neu.textSecondary,
-                        style = MaterialTheme.typography.bodyMedium
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
                     )
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     EmeraldPillButton(
                         text = "Import Video to Start",
                         onClick = onImportNewVideo
@@ -807,13 +881,245 @@ fun ProjectsHistoryScreen(
                 }
             }
         } else {
+            // 1. Processing Queue & Job History Section (Compact Cards with Pause/Resume/Cancel/Retry/Remove)
+            if (jobs.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Processing Queue (${jobs.size})",
+                        color = neu.textPrimary,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.5.sp
+                        )
+                    )
+                    if (isProcessing) {
+                        Text(
+                            text = if (isPaused) "PAUSED" else "RUNNING LIVE",
+                            color = if (isPaused) neu.sunAmber else neu.accentPrimary,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 11.sp
+                            )
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                jobs.take(12).forEach { job ->
+                    val isThisJobActive = isProcessing && (job.id == activeJobId || job.status in listOf("processing", "paused", "queued"))
+                    val statusUpper = job.status.uppercase()
+                    val statusColor = when (job.status.lowercase()) {
+                        "completed" -> neu.accentPrimary
+                        "paused" -> neu.sunAmber
+                        "failed", "cancelled" -> MaterialTheme.colorScheme.error
+                        else -> neu.accentSecondary
+                    }
+
+                    NeumorphicCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .testTag("queue_job_card_${job.id}"),
+                        cornerRadius = 16.dp,
+                        contentPadding = PaddingValues(12.dp)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            // Top row: File name + Operation badge + Status badge
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = job.sourceFileName,
+                                        color = neu.textPrimary,
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.5.sp
+                                        ),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(neu.accentPrimary.copy(alpha = 0.14f))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = job.operationType.uppercase(),
+                                            color = neu.accentPrimary,
+                                            style = MaterialTheme.typography.labelMedium.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 10.sp
+                                            )
+                                        )
+                                    }
+                                }
+
+                                Text(
+                                    text = "$statusUpper (${job.progressPercent}%)",
+                                    color = statusColor,
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp
+                                    )
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            // Spec Summary Row (Performance mode, resolution, FPS, codec, route)
+                            Text(
+                                text = "${job.configSummary} • Route: ${job.executionRoute.uppercase()}",
+                                color = neu.textSecondary,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+
+                            if (!job.errorMessage.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = job.errorMessage,
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
+                                    maxLines = 2
+                                )
+                            }
+
+                            // Progress Bar + Elapsed/ETA for Active or In-Progress Jobs
+                            if (isThisJobActive || job.progressPercent in 1..99) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                LinearProgressIndicator(
+                                    progress = { (job.progressPercent / 100f).coerceIn(0f, 1f) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(5.dp)
+                                        .clip(RoundedCornerShape(3.dp)),
+                                    color = statusColor,
+                                    trackColor = neu.surfaceInset
+                                )
+                                if (isThisJobActive) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "Elapsed: ${EliteMatrixViewModel.formatDurationSeconds(elapsedTimeMs)}",
+                                            color = neu.textSecondary,
+                                            style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.5.sp)
+                                        )
+                                        Text(
+                                            text = "ETA: ${if (estimatedRemainingMs > 0L) EliteMatrixViewModel.formatDurationSeconds(estimatedRemainingMs) else "Estimating..."}",
+                                            color = neu.accentPrimary,
+                                            style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.5.sp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Compact Action Buttons Row
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (isThisJobActive) {
+                                    NeumorphicPillButton(
+                                        text = if (isPaused) "Resume" else "Pause",
+                                        height = 32.dp,
+                                        testTag = "job_pause_resume_${job.id}",
+                                        leadingContent = {
+                                            Icon(
+                                                imageVector = if (isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                                                contentDescription = null,
+                                                tint = neu.accentPrimary,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { if (isPaused) onResumeActiveJob() else onPauseActiveJob() }
+                                    )
+                                    NeumorphicPillButton(
+                                        text = "Cancel",
+                                        height = 32.dp,
+                                        testTag = "job_cancel_${job.id}",
+                                        leadingContent = {
+                                            Icon(
+                                                imageVector = Icons.Filled.Close,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        onClick = onCancelActiveJob
+                                    )
+                                } else {
+                                    NeumorphicPillButton(
+                                        text = if (job.status in listOf("failed", "cancelled")) "Retry Job" else "Re-Run",
+                                        height = 32.dp,
+                                        testTag = "job_retry_${job.id}",
+                                        leadingContent = {
+                                            Icon(
+                                                imageVector = Icons.Outlined.Refresh,
+                                                contentDescription = null,
+                                                tint = neu.accentPrimary,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { onRetryJob(job) }
+                                    )
+                                    NeumorphicPillButton(
+                                        text = "Remove",
+                                        height = 32.dp,
+                                        testTag = "job_remove_${job.id}",
+                                        leadingContent = {
+                                            Icon(
+                                                imageVector = Icons.Outlined.DeleteOutline,
+                                                contentDescription = null,
+                                                tint = neu.textSecondary,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { onRemoveJob(job) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // 2. Completed Exports Section
             if (exports.isNotEmpty()) {
                 Text(
                     text = "Completed Exports (${exports.size})",
                     color = neu.textPrimary,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.5.sp
+                    )
                 )
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 exports.forEach { item ->
                     RecentProjectNeumorphicCard(
                         exportItem = item,
@@ -822,50 +1128,7 @@ fun ProjectsHistoryScreen(
                         onShareClick = { onShareExport(item) },
                         onDeleteClick = { onDeleteExport(item) }
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
-            }
-
-            if (jobs.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "Processing Queue & Job Log",
-                    color = neu.textPrimary,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                jobs.take(10).forEach { job ->
-                    NeumorphicCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 10.dp),
-                        cornerRadius = 18.dp,
-                        contentPadding = PaddingValues(14.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "${job.sourceFileName} (${job.operationType.uppercase()})",
-                                    color = neu.textPrimary,
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
-                                )
-                                Text(
-                                    text = "${job.configSummary} • Route: ${job.executionRoute.uppercase()}",
-                                    color = neu.textSecondary,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
-                                )
-                            }
-                            Text(
-                                text = "${job.status.uppercase()} (${job.progressPercent}%)",
-                                color = neu.accentPrimary,
-                                style = MaterialTheme.typography.labelLarge
-                            )
-                        }
-                    }
+                    Spacer(modifier = Modifier.height(8.dp))
                 }
             }
         }
@@ -894,29 +1157,30 @@ fun SettingsScreen(
 ) {
     BackHandler(onBack = onBackToHome)
     val neu = LocalNeumorphicColors.current
+    val metrics = rememberResponsiveMetrics()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .padding(horizontal = metrics.horizontalPadding, vertical = metrics.verticalPadding)
     ) {
         Text(
             text = "Settings & Appearance",
             color = neu.textPrimary,
             style = MaterialTheme.typography.headlineMedium.copy(
                 fontWeight = FontWeight.Bold,
-                fontSize = 22.sp
+                fontSize = 20.sp
             )
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // 1. Account & Cloud Sync Card
         NeumorphicCard(
             modifier = Modifier.fillMaxWidth(),
-            cornerRadius = 22.dp,
-            contentPadding = PaddingValues(16.dp)
+            cornerRadius = 20.dp,
+            contentPadding = PaddingValues(14.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
@@ -924,7 +1188,7 @@ fun SettingsScreen(
                     color = neu.textPrimary,
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Text(
                     text = if (isGuestMode) {
                         "Your presets and exports are stored locally on this device. Sign in with Google to enable Firestore Cloud Sync & Cloud Run FFmpeg workers."
@@ -932,12 +1196,12 @@ fun SettingsScreen(
                         "Signed in as ${userEmail ?: "Google Account"} • Cloud Sync Active"
                     },
                     color = neu.textSecondary,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.5.sp)
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
                 )
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 NeumorphicPillButton(
                     text = if (isGuestMode) "Sign in with Google to Sync" else "Sign Out",
-                    height = 44.dp,
+                    height = 42.dp,
                     testTag = "settings_auth_action_button",
                     leadingContent = if (isGuestMode) {
                         { GoogleLogoIcon(Modifier.size(18.dp)) }
@@ -947,7 +1211,7 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // 2. Permissions, Gallery Auto-Save & Full Files Access Card
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -955,20 +1219,20 @@ fun SettingsScreen(
                 imageVector = Icons.Outlined.Security,
                 contentDescription = null,
                 tint = neu.accentPrimary,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(19.dp)
             )
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = "Permissions, Gallery & Files Access",
                 color = neu.textPrimary,
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
             )
         }
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         NeumorphicCard(
             modifier = Modifier.fillMaxWidth(),
-            cornerRadius = 22.dp,
-            contentPadding = PaddingValues(16.dp)
+            cornerRadius = 20.dp,
+            contentPadding = PaddingValues(14.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
@@ -984,7 +1248,7 @@ fun SettingsScreen(
                         )
                         Text(
                             text = "Real-time completion alerts when video exports finish",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp),
                             color = neu.textSecondary
                         )
                     }
@@ -995,9 +1259,9 @@ fun SettingsScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider(color = neu.divider)
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1012,7 +1276,7 @@ fun SettingsScreen(
                         )
                         Text(
                             text = "Automatically saves processed videos to Movies/EliteMatrix in Gallery",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp),
                             color = neu.textSecondary
                         )
                     }
@@ -1021,7 +1285,7 @@ fun SettingsScreen(
                             imageVector = Icons.Filled.CheckCircle,
                             contentDescription = null,
                             tint = if (hasGalleryStorageAccess) neu.accentPrimary else neu.thermoOrange,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
@@ -1032,7 +1296,7 @@ fun SettingsScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 EmeraldPillButton(
                     text = "Grant All Permissions (Notifications & Gallery)",
@@ -1048,11 +1312,11 @@ fun SettingsScreen(
                     onClick = onRequestAllPermissions
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 NeumorphicPillButton(
                     text = "Browse All Video Files (Full Storage Picker)",
-                    height = 44.dp,
+                    height = 42.dp,
                     testTag = "open_full_file_picker_button",
                     leadingContent = {
                         Icon(
@@ -1067,7 +1331,7 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // 3. Theme Mode Selector (Light, Dark, Follow System)
         Text(
@@ -1075,7 +1339,7 @@ fun SettingsScreen(
             color = neu.textPrimary,
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
         )
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1089,7 +1353,7 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // 4. Typography & Font Styles Selector
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1097,26 +1361,26 @@ fun SettingsScreen(
                 imageVector = Icons.Outlined.TextFields,
                 contentDescription = null,
                 tint = neu.accentPrimary,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(19.dp)
             )
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = "Typography & Font Style",
                 color = neu.textPrimary,
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
             )
         }
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             AppFontFamily.entries.forEach { fontOption ->
                 val isSelected = preferences.fontFamily == fontOption
                 NeumorphicCard(
-                    cornerRadius = 16.dp,
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                    cornerRadius = 15.dp,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                     onClick = { onSelectFontFamily(fontOption) }
                 ) {
                     Column {
@@ -1125,20 +1389,20 @@ fun SettingsScreen(
                             color = if (isSelected) neu.accentPrimary else neu.textPrimary,
                             style = MaterialTheme.typography.labelLarge.copy(
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                                fontSize = 12.5.sp
+                                fontSize = 12.sp
                             )
                         )
                         Text(
                             text = fontOption.subtitle,
                             color = neu.textSecondary,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 10.5.sp)
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 10.sp)
                         )
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // 5. Neumorphic Color Palettes (16 Custom Light & Dark Themes)
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1146,44 +1410,44 @@ fun SettingsScreen(
                 imageVector = Icons.Outlined.Palette,
                 contentDescription = null,
                 tint = neu.accentPrimary,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(19.dp)
             )
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = "Neumorphic Color Themes (${ThemePalette.entries.size})",
                 color = neu.textPrimary,
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
             )
         }
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             ThemePalette.entries.forEach { palette ->
                 val isSelected = preferences.themePalette == palette
                 val previewColors = paletteFor(palette, palette.isDarkPalette)
                 NeumorphicCard(
-                    cornerRadius = 16.dp,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    cornerRadius = 15.dp,
+                    contentPadding = PaddingValues(horizontal = 11.dp, vertical = 8.dp),
                     onClick = { onSelectPalette(palette) }
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .size(18.dp)
+                                .size(16.dp)
                                 .clip(CircleShape)
                                 .background(previewColors.canvas)
                                 .border(2.dp, previewColors.accentPrimary, CircleShape)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(7.dp))
                         Text(
                             text = palette.displayName,
                             color = if (isSelected) neu.accentPrimary else neu.textPrimary,
                             style = MaterialTheme.typography.labelLarge.copy(
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 12.5.sp
+                                fontSize = 12.sp
                             )
                         )
                     }
@@ -1191,7 +1455,7 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // 6. Local / Cloud Routing & Privacy
         Text(
@@ -1199,7 +1463,7 @@ fun SettingsScreen(
             color = neu.textPrimary,
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
         )
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1213,12 +1477,12 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         NeumorphicCard(
             modifier = Modifier.fillMaxWidth(),
-            cornerRadius = 20.dp,
-            contentPadding = PaddingValues(16.dp)
+            cornerRadius = 18.dp,
+            contentPadding = PaddingValues(14.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
@@ -1228,7 +1492,7 @@ fun SettingsScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Preserve Video Metadata", style = MaterialTheme.typography.titleMedium, color = neu.textPrimary)
-                        Text("Retain compatible color tags and creation timestamps", style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp), color = neu.textSecondary)
+                        Text("Retain compatible color tags and creation timestamps", style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp), color = neu.textSecondary)
                     }
                     Switch(
                         checked = preferences.preserveMetadata,
@@ -1236,9 +1500,9 @@ fun SettingsScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider(color = neu.divider)
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1247,7 +1511,7 @@ fun SettingsScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Job Completion Alerts", style = MaterialTheme.typography.titleMedium, color = neu.textPrimary)
-                        Text("Notify when background or cloud exports finish", style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp), color = neu.textSecondary)
+                        Text("Notify when background or cloud exports finish", style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp), color = neu.textSecondary)
                     }
                     Switch(
                         checked = preferences.notificationsEnabled,
@@ -1257,15 +1521,15 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         // 7. Developer Credit Card ("Made with ❤️ by Rahul Shah")
         NeumorphicCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("developer_credit_card"),
-            cornerRadius = 22.dp,
-            contentPadding = PaddingValues(18.dp)
+            cornerRadius = 20.dp,
+            contentPadding = PaddingValues(14.dp)
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -1280,33 +1544,33 @@ fun SettingsScreen(
                         color = neu.textPrimary,
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold,
-                            fontSize = 15.5.sp
+                            fontSize = 15.sp
                         )
                     )
                     Icon(
                         imageVector = Icons.Filled.Favorite,
                         contentDescription = "Love",
                         tint = Color(0xFFE53935),
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(17.dp)
                     )
                     Text(
                         text = " by Rahul Shah",
                         color = neu.accentPrimary,
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 15.5.sp
+                            fontSize = 15.sp
                         )
                     )
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Text(
                     text = "ELITE MATRIX • HQ Video Enhancer & Real-Time Media Studio",
                     color = neu.textSecondary,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp)
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.5.sp)
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(12.dp))
     }
 }

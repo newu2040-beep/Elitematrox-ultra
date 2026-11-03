@@ -400,8 +400,14 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
                                 recentExports = exports,
                                 activeJobs = jobs,
                                 isProcessing = editorState.isProcessing,
+                                isPaused = editorState.isPaused,
                                 processingProgress = editorState.processingProgress,
                                 processingStatus = editorState.processingStatus,
+                                elapsedTimeMs = editorState.elapsedTimeMs,
+                                estimatedRemainingMs = editorState.estimatedRemainingMs,
+                                onPauseProcessing = { viewModel.pauseActiveProcessing() },
+                                onResumeProcessing = { viewModel.resumeActiveProcessing() },
+                                onCancelProcessing = { viewModel.cancelActiveProcessing() },
                                 onImportVideoClick = {
                                     pendingDestinationAfterImport = null
                                     photoPickerLauncher.launch(
@@ -483,13 +489,20 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
                         PrimaryScreen.ExportSettings -> {
                             ExportSettingsScreen(
                                 selectedVideo = editorState.selectedVideo,
+                                adjustments = editorState.adjustments,
                                 exportConfig = editorState.exportConfig,
                                 deviceCapabilities = editorState.deviceCapabilities,
                                 isProcessing = editorState.isProcessing,
+                                isPaused = editorState.isPaused,
                                 processingProgress = editorState.processingProgress,
                                 processingStatus = editorState.processingStatus,
+                                elapsedTimeMs = editorState.elapsedTimeMs,
+                                estimatedRemainingMs = editorState.estimatedRemainingMs,
                                 onUpdateExportConfig = { transform ->
                                     viewModel.updateExportConfig(transform)
+                                },
+                                onSelectPerformanceMode = { mode ->
+                                    viewModel.setPerformanceMode(mode)
                                 },
                                 onApplyRecommendedHardwareSettings = {
                                     viewModel.applyRecommendedHardwareSettings()
@@ -502,6 +515,15 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
                                 },
                                 onStartExportJob = {
                                     viewModel.requestStartProcessing(context, operationType = "export")
+                                },
+                                onPauseProcessing = {
+                                    viewModel.pauseActiveProcessing()
+                                },
+                                onResumeProcessing = {
+                                    viewModel.resumeActiveProcessing()
+                                },
+                                onCancelProcessing = {
+                                    viewModel.cancelActiveProcessing()
                                 },
                                 onBack = {
                                     viewModel.navigateTo(PrimaryScreen.EnhanceVideo)
@@ -573,6 +595,16 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
                                 jobs = jobs,
                                 exports = exports,
                                 thumbnailBitmap = editorState.videoThumbnail,
+                                isProcessing = editorState.isProcessing,
+                                isPaused = editorState.isPaused,
+                                activeJobId = editorState.activeJobId,
+                                elapsedTimeMs = editorState.elapsedTimeMs,
+                                estimatedRemainingMs = editorState.estimatedRemainingMs,
+                                onPauseActiveJob = { viewModel.pauseActiveProcessing() },
+                                onResumeActiveJob = { viewModel.resumeActiveProcessing() },
+                                onCancelActiveJob = { viewModel.cancelActiveProcessing() },
+                                onRetryJob = { job -> viewModel.retryJob(context, job) },
+                                onRemoveJob = { job -> viewModel.removeJob(job) },
                                 onOpenExport = { exportItem ->
                                     if (exportItem.localUri.isNotBlank()) {
                                         viewModel.openVideoPlayer(exportItem.localUri)
