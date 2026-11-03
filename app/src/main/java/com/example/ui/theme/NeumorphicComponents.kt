@@ -62,8 +62,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.model.AspectRatioMode
+import com.example.domain.model.CreativeFilterPreset
 import com.example.domain.model.EnhancementAdjustments
+import com.example.domain.model.LutPreset
 import com.example.domain.model.ProcessingPerformanceMode
+import com.example.domain.model.RgbCurvePreset
 
 enum class DeviceSizeClass {
     CompactSmall,   // < 360dp width or < 640dp height
@@ -1074,24 +1077,74 @@ fun VideoThumbnailPreview(
 ) {
     val colorMatrix = remember(adjustments) {
         val profile = adjustments.cinematicProfile
-        val totalBrightness = adjustments.brightness + (adjustments.exposure * 0.7f) + (adjustments.shadows * 0.35f)
-        val totalContrast = adjustments.contrast + profile.contrastDelta + (adjustments.highlights * 0.3f)
-        val totalSat = adjustments.saturation + profile.saturationDelta + (adjustments.vibrance * 0.55f)
-        val totalTemp = adjustments.temperature + profile.temperatureDelta
-        val totalTint = adjustments.tint + profile.tintDelta
+        val cf = adjustments.creativeFilter
+        val filterScale = if (cf != CreativeFilterPreset.None) {
+            (adjustments.filterIntensity / 100f).coerceIn(0f, 1f)
+        } else 0f
+
+        val lutContrast = when (adjustments.lutPreset) {
+            LutPreset.None -> 0f
+            LutPreset.Rec709Studio -> 8f
+            LutPreset.Kodak2383Print -> 18f
+            LutPreset.Fuji3513Print -> 15f
+            LutPreset.TealOrangeMaster -> 16f
+            LutPreset.LogToRec709 -> 24f
+        }
+        val curveContrast = when (adjustments.rgbCurvePreset) {
+            RgbCurvePreset.Linear -> 0f
+            RgbCurvePreset.SCurveContrast -> 16f
+            RgbCurvePreset.LiftedMatteBlacks -> -6f
+            RgbCurvePreset.SoftHighlightRoll -> -4f
+        }
+        val curveLift = when (adjustments.rgbCurvePreset) {
+            RgbCurvePreset.LiftedMatteBlacks -> 10f
+            RgbCurvePreset.SoftHighlightRoll -> 4f
+            else -> 0f
+        }
+
+        val totalBrightness = adjustments.brightness +
+            (adjustments.exposure * 0.7f) +
+            (adjustments.shadows * 0.35f) +
+            (adjustments.hslLightnessShift * 0.45f) +
+            curveLift +
+            ((cf.exposureShift * 0.6f + cf.shadowLift * 0.35f) * filterScale)
+        val totalContrast = adjustments.contrast +
+            profile.contrastDelta +
+            (adjustments.highlights * 0.3f) +
+            lutContrast +
+            curveContrast +
+            (cf.contrastShift * filterScale)
+        val rawSat = adjustments.saturation +
+            profile.saturationDelta +
+            (adjustments.vibrance * 0.55f) +
+            (cf.saturationShift * filterScale)
+        val totalSat = if (cf.isMonochrome && filterScale >= 0.5f) {
+            -100f * filterScale
+        } else {
+            rawSat
+        }
+        val totalTemp = adjustments.temperature +
+            profile.temperatureDelta -
+            adjustments.colorBalanceBlueYellow +
+            (cf.tempShift * filterScale)
+        val totalTint = adjustments.tint +
+            profile.tintDelta +
+            adjustments.colorBalanceRedCyan +
+            (cf.tintShift * filterScale)
 
         val b = (totalBrightness / 100f) * 55f
         val c = (1f + (totalContrast / 100f) * 0.65f).coerceIn(0.25f, 2.5f)
         val s = (1f + (totalSat / 100f) * 0.85f).coerceAtLeast(0f)
-        val t = (totalTemp / 100f) * 24f
-        val gTint = (totalTint / 100f) * 18f
+        val t = (totalTemp / 100f) * 24f + (cf.rScaleDelta * filterScale * 30f)
+        val gTint = (totalTint / 100f) * 18f + (cf.gScaleDelta * filterScale * 25f)
+        val bShift = -((totalTemp / 100f) * 24f) + (cf.bScaleDelta * filterScale * 30f)
 
         val saturationMatrix = ColorMatrix().apply { setToSaturation(s) }
         val scaleTranslateMatrix = ColorMatrix(
             floatArrayOf(
                 c, 0f, 0f, 0f, b + t,
                 0f, c, 0f, 0f, b + gTint,
-                0f, 0f, c, 0f, b - t,
+                0f, 0f, c, 0f, b + bShift,
                 0f, 0f, 0f, 1f, 0f
             )
         )

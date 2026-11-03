@@ -29,12 +29,14 @@ import com.example.domain.model.AppFontFamily
 import com.example.domain.model.AspectRatioMode
 import com.example.domain.model.BuiltInPresets
 import com.example.domain.model.CinematicColorProfile
+import com.example.domain.model.CreativeFilterPreset
 import com.example.domain.model.DeviceHardwareCapabilities
 import com.example.domain.model.EnhancementAdjustments
 import com.example.domain.model.ExecutionRoute
 import com.example.domain.model.ExportConfiguration
 import com.example.domain.model.ExportItem
 import com.example.domain.model.JobItem
+import com.example.domain.model.JobStage
 import com.example.domain.model.PresetItem
 import com.example.domain.model.ProcessingPerformanceMode
 import com.example.domain.model.SocialMediaPreset
@@ -48,6 +50,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -56,6 +59,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 enum class PrimaryScreen {
@@ -89,10 +93,13 @@ data class EditorUiState(
     val isProcessing: Boolean = false,
     val isPaused: Boolean = false,
     val activeJobId: String? = null,
+    val jobStage: JobStage = JobStage.Queued,
     val processingStatus: String = "Idle",
     val processingProgress: Int = 0,
     val elapsedTimeMs: Long = 0L,
     val estimatedRemainingMs: Long = 0L,
+    val processingSpeedLabel: String = "",
+    val favoriteFilterIds: Set<String> = setOf("kodak_portra_400", "fuji_velvia_50", "cine_anamorphic"),
     val lastCompletedOutput: ProcessedVideoOutput? = null,
     val statusMessage: String? = null,
     val showCloudConsentDialog: Boolean = false,
@@ -471,6 +478,30 @@ class EliteMatrixViewModel(
         _editorState.update { it.copy(adjustments = transform(it.adjustments)) }
     }
 
+    fun applyCreativeFilter(filter: CreativeFilterPreset) {
+        _editorState.update { state ->
+            state.copy(
+                adjustments = state.adjustments.copy(
+                    creativeFilter = filter,
+                    filterIntensity = if (filter == CreativeFilterPreset.None) 0 else state.adjustments.filterIntensity.coerceIn(25, 100)
+                ),
+                statusMessage = if (filter == CreativeFilterPreset.None) {
+                    "Cleared creative film filter"
+                } else {
+                    "Applied ${filter.title} (${filter.category.title}) • ${filter.subtitle}"
+                }
+            )
+        }
+    }
+
+    fun toggleFavoriteFilter(filterId: String) {
+        _editorState.update { state ->
+            val updated = state.favoriteFilterIds.toMutableSet()
+            if (filterId in updated) updated.remove(filterId) else updated.add(filterId)
+            state.copy(favoriteFilterIds = updated)
+        }
+    }
+
     fun resetAdjustments() {
         _editorState.update { it.copy(adjustments = EnhancementAdjustments.Neutral) }
     }
@@ -654,235 +685,307 @@ class EliteMatrixViewModel(
 
         activeProcessingJob = viewModelScope.launch {
             val jobId = existingJobId ?: "job_${UUID.randomUUID().toString().replace("-", "").take(12)}"
+            val jobStartWallMs = System.currentTimeMillis()
+            var pausedAccumulatedMs = 0L
+            var lastTickMs = jobStartWallMs
+
+            fun inferStage(pct: Int, statusText: String): JobStage {
+                val lower = statusText.lowercase()
+                return when {
+                    pct >= 100 || lower.contains("completed") -> JobStage.Completed
+                    lower.contains("fail") -> JobStage.Failed
+                    lower.contains("cancel") -> JobStage.Cancelled
+                    lower.contains("queue") || pct <= 4 -> JobStage.Queued
+                    lower.contains("upload") || lower.contains("cloud") && pct < 22 -> JobStage.Uploading
+                    pct >= 93 || lower.contains("final") || lower.contains("gallery") -> JobStage.Finalizing
+                    pct >= 56 || lower.contains("cfr") || lower.contains("optical flow") || lower.contains("encoding") -> JobStage.Encoding
+                    else -> JobStage.Processing
+                }
+            }
+
             _editorState.update {
                 it.copy(
                     isProcessing = true,
                     isPaused = false,
                     activeJobId = jobId,
-                    processingProgress = 2,
-                    elapsedTimeMs = 0L,
-                    estimatedRemainingMs = 0L,
-                    processingStatus = "Preparing source video...",
+                    jobStage = JobStage.Queued,
+                    processingProgress = 3,
+                    elapsedTimeMs = 100L,
+                    estimatedRemainingMs = 2400L,
+                    processingSpeedLabel = "${it.exportConfig.fps} fps target",
+                    processingStatus = "Queued • Initializing video pipeline...",
                     statusMessage = null
                 )
             }
 
-            var sourceMeta = _editorState.value.selectedVideo
-            if (sourceMeta == null) {
-                val sampleUri = VideoProcessingEngine.generateRealSampleVideoMp4(context, "Nature_Video.mp4").getOrNull()
-                if (sampleUri != null) {
-                    sourceMeta = VideoProcessingEngine.inspectVideo(context, sampleUri).getOrNull()
-                    val thumb = VideoProcessingEngine.extractThumbnail(context, sampleUri)
-                    _editorState.update { it.copy(selectedVideo = sourceMeta, videoThumbnail = thumb) }
+            // Live 250ms telemetry ticker so Elapsed, ETA, and Speed update continuously without ever freezing at 0s
+            val tickerJob = launch {
+                while (isActive) {
+                    delay(250L)
+                    val now = System.currentTimeMillis()
+                    if (pauseFlag.get()) {
+                        pausedAccumulatedMs += (now - lastTickMs).coerceAtLeast(0L)
+                        lastTickMs = now
+                        continue
+                    }
+                    lastTickMs = now
+                    val activeElapsed = (now - jobStartWallMs - pausedAccumulatedMs).coerceAtLeast(200L)
+                    _editorState.update { st ->
+                        if (!st.isProcessing) return@update st
+                        val pct = st.processingProgress.coerceIn(3, 99)
+                        val dynamicEta = if (pct in 4..98) {
+                            ((activeElapsed.toDouble() / pct.toDouble()) * (100 - pct)).toLong().coerceIn(300L, 180_000L)
+                        } else {
+                            st.estimatedRemainingMs
+                        }
+                        val estFps = ((pct * st.exportConfig.fps) / (activeElapsed / 1000.0).coerceAtLeast(0.4))
+                            .toInt()
+                            .coerceIn(12, st.exportConfig.fps * 2)
+                        st.copy(
+                            elapsedTimeMs = activeElapsed,
+                            estimatedRemainingMs = dynamicEta,
+                            processingSpeedLabel = "$estFps fps • ${st.exportConfig.performanceMode.badge}",
+                            jobStage = inferStage(pct, st.processingStatus)
+                        )
+                    }
                 }
             }
 
-            val validMeta = sourceMeta ?: run {
-                _editorState.update {
-                    it.copy(
-                        isProcessing = false,
-                        isPaused = false,
-                        activeJobId = null,
-                        statusMessage = "Please select or import a video file first."
-                    )
+            try {
+                var sourceMeta = _editorState.value.selectedVideo
+                if (sourceMeta == null) {
+                    val sampleUri = VideoProcessingEngine.generateRealSampleVideoMp4(context, "Nature_Video.mp4").getOrNull()
+                    if (sampleUri != null) {
+                        sourceMeta = VideoProcessingEngine.inspectVideo(context, sampleUri).getOrNull()
+                        val thumb = VideoProcessingEngine.extractThumbnail(context, sampleUri)
+                        _editorState.update { it.copy(selectedVideo = sourceMeta, videoThumbnail = thumb) }
+                    }
                 }
-                return@launch
-            }
 
-            val sourceUri = Uri.parse(validMeta.uriString)
-            val adjustments = _editorState.value.adjustments
-            val exportConfig = _editorState.value.exportConfig
-            val isCompressionWorkflow = operationType.equals("compress", ignoreCase = true)
-            val targetBitrateKbps = exportConfig.effectiveBitrateKbps(isCompressionWorkflow)
-            val (targetW, targetH) = exportConfig.targetDimensionsPx(
-                sourceWidth = validMeta.displayWidth,
-                sourceHeight = validMeta.displayHeight,
-                manualRotationDegrees = adjustments.rotationDegrees,
-                aspectRatioMode = adjustments.aspectRatioMode
-            )
-            val routeLabel = if (useCloudRoute && authenticatedUserId != null) "cloud" else "local"
-            val summary = "${exportConfig.performanceMode.badge} • ${targetW}×${targetH} (${exportConfig.resolution}) • ${exportConfig.fps} FPS • ${"%.1f".format(targetBitrateKbps / 1000f)} Mbps • ${exportConfig.codec} • ${exportConfig.containerFormat}"
-
-            val initialJob = JobItem(
-                id = jobId,
-                sourceFileName = validMeta.fileName,
-                sourceUri = validMeta.uriString,
-                sourceSizeBytes = validMeta.sizeBytes,
-                operationType = operationType,
-                executionRoute = routeLabel,
-                configSummary = summary,
-                status = "processing",
-                progressPercent = 5
-            )
-            localDao.upsertJob(LocalJobEntity.fromDomain(initialJob))
-
-            if (authenticatedUserId != null) {
-                firestoreRepository.createJob(
-                    FirestoreProcessingJob(
-                        id = jobId,
-                        userId = authenticatedUserId,
-                        sourceFileName = validMeta.fileName,
-                        sourceUri = validMeta.uriString,
-                        sourceSizeBytes = validMeta.sizeBytes,
-                        operationType = operationType,
-                        executionRoute = routeLabel,
-                        configSummary = summary,
-                        status = "processing",
-                        progressPercent = 5L,
-                        outputSizeBytes = 0L
-                    ),
-                    customId = jobId
-                )
-            }
-
-            val processResult = if (useCloudRoute && authenticatedUserId != null) {
-                CloudWorkerClient.executeCloudOrHybridJob(
-                    context = context,
-                    endpointBaseUrl = preferencesState.value.cloudRunEndpointUrl,
-                    jobId = jobId,
-                    sourceUri = sourceUri,
-                    sourceMetadata = validMeta,
-                    adjustments = adjustments,
-                    exportConfig = exportConfig,
-                    onStatusAndProgress = { status, pct ->
-                        _editorState.update {
-                            it.copy(
-                                processingStatus = status.replaceFirstChar { c -> c.uppercase() },
-                                processingProgress = pct
-                            )
-                        }
+                val validMeta = sourceMeta ?: run {
+                    _editorState.update {
+                        it.copy(
+                            isProcessing = false,
+                            isPaused = false,
+                            activeJobId = null,
+                            jobStage = JobStage.Failed,
+                            statusMessage = "Please select or import a video file first."
+                        )
                     }
-                )
-            } else {
-                VideoProcessingEngine.processVideo(
-                    context = context,
-                    sourceUri = sourceUri,
-                    sourceMetadata = validMeta,
-                    adjustments = adjustments,
-                    exportConfig = exportConfig,
-                    isCompressionWorkflow = isCompressionWorkflow,
-                    isPausedProvider = { pauseFlag.get() },
-                    onDetailedProgress = { pct, elapsed, eta, phase ->
-                        _editorState.update { state ->
-                            state.copy(
-                                processingStatus = if (pauseFlag.get()) "Paused • $phase" else phase,
-                                processingProgress = pct,
-                                elapsedTimeMs = elapsed,
-                                estimatedRemainingMs = eta
-                            )
-                        }
-                    },
-                    onProgress = { pct ->
-                        viewModelScope.launch {
-                            localDao.upsertJob(
-                                LocalJobEntity.fromDomain(
-                                    initialJob.copy(
-                                        status = if (pauseFlag.get()) "paused" else "processing",
-                                        progressPercent = pct,
-                                        updatedAtMillis = System.currentTimeMillis()
-                                    )
-                                )
-                            )
-                        }
-                    }
-                )
-            }
+                    return@launch
+                }
 
-            processResult.onSuccess { output ->
-                val completedJob = initialJob.copy(
-                    status = "completed",
-                    progressPercent = 100,
-                    outputFilePath = output.outputUri.toString(),
-                    outputSizeBytes = output.outputSizeBytes,
-                    updatedAtMillis = System.currentTimeMillis()
+                val sourceUri = Uri.parse(validMeta.uriString)
+                val adjustments = _editorState.value.adjustments
+                val exportConfig = _editorState.value.exportConfig
+                val isCompressionWorkflow = operationType.equals("compress", ignoreCase = true)
+                val targetBitrateKbps = exportConfig.effectiveBitrateKbps(isCompressionWorkflow)
+                val (targetW, targetH) = exportConfig.targetDimensionsPx(
+                    sourceWidth = validMeta.displayWidth,
+                    sourceHeight = validMeta.displayHeight,
+                    manualRotationDegrees = adjustments.rotationDegrees,
+                    aspectRatioMode = adjustments.aspectRatioMode
                 )
-                localDao.upsertJob(LocalJobEntity.fromDomain(completedJob))
+                val routeLabel = if (useCloudRoute && authenticatedUserId != null) "cloud" else "local"
+                val summary = "${exportConfig.performanceMode.badge} • ${targetW}×${targetH} (${exportConfig.resolution}) • ${exportConfig.fps} FPS • ${"%.1f".format(targetBitrateKbps / 1000f)} Mbps • ${exportConfig.codec} • ${exportConfig.containerFormat}"
 
-                val exportId = "exp_${UUID.randomUUID().toString().replace("-", "").take(12)}"
-                val exportItem = ExportItem(
-                    id = exportId,
-                    jobId = jobId,
-                    fileName = output.fileName,
-                    originalSizeBytes = output.originalSizeBytes,
-                    outputSizeBytes = output.outputSizeBytes,
-                    savedPercent = output.savedPercent,
-                    resolution = "${output.width}×${output.height} (${output.resolutionLabel})",
-                    fps = output.fps,
-                    codec = output.codec,
-                    containerFormat = output.containerFormat,
-                    durationMs = output.durationMs,
-                    localUri = output.outputUri.toString()
+                val initialJob = JobItem(
+                    id = jobId,
+                    sourceFileName = validMeta.fileName,
+                    sourceUri = validMeta.uriString,
+                    sourceSizeBytes = validMeta.sizeBytes,
+                    operationType = operationType,
+                    executionRoute = routeLabel,
+                    configSummary = summary,
+                    status = "processing",
+                    progressPercent = 6
                 )
-                localDao.upsertExport(LocalExportEntity.fromDomain(exportItem))
+                localDao.upsertJob(LocalJobEntity.fromDomain(initialJob))
 
                 if (authenticatedUserId != null) {
-                    firestoreRepository.updateJobProgress(
+                    firestoreRepository.createJob(
+                        FirestoreProcessingJob(
+                            id = jobId,
+                            userId = authenticatedUserId,
+                            sourceFileName = validMeta.fileName,
+                            sourceUri = validMeta.uriString,
+                            sourceSizeBytes = validMeta.sizeBytes,
+                            operationType = operationType,
+                            executionRoute = routeLabel,
+                            configSummary = summary,
+                            status = "processing",
+                            progressPercent = 6L,
+                            outputSizeBytes = 0L
+                        ),
+                        customId = jobId
+                    )
+                }
+
+                val handleDetailedProgress: (Int, Long, Long, String) -> Unit = { pct, elapsed, eta, phase ->
+                    _editorState.update { state ->
+                        val effectiveElapsed = maxOf(elapsed, state.elapsedTimeMs, 150L)
+                        val effectiveEta = if (eta > 0L) eta else state.estimatedRemainingMs
+                        state.copy(
+                            jobStage = inferStage(pct, phase),
+                            processingStatus = if (pauseFlag.get()) "Paused • $phase" else phase,
+                            processingProgress = pct.coerceIn(state.processingProgress, 99),
+                            elapsedTimeMs = effectiveElapsed,
+                            estimatedRemainingMs = effectiveEta
+                        )
+                    }
+                }
+
+                val handleProgressPersist: (Int) -> Unit = { pct ->
+                    viewModelScope.launch {
+                        localDao.upsertJob(
+                            LocalJobEntity.fromDomain(
+                                initialJob.copy(
+                                    status = if (pauseFlag.get()) "paused" else "processing",
+                                    progressPercent = pct,
+                                    updatedAtMillis = System.currentTimeMillis()
+                                )
+                            )
+                        )
+                    }
+                }
+
+                val processResult = if (useCloudRoute && authenticatedUserId != null) {
+                    CloudWorkerClient.executeCloudOrHybridJob(
+                        context = context,
+                        endpointBaseUrl = preferencesState.value.cloudRunEndpointUrl,
                         jobId = jobId,
+                        sourceUri = sourceUri,
+                        sourceMetadata = validMeta,
+                        adjustments = adjustments,
+                        exportConfig = exportConfig,
+                        isCompressionWorkflow = isCompressionWorkflow,
+                        isPausedProvider = { pauseFlag.get() },
+                        onDetailedProgress = handleDetailedProgress,
+                        onStatusAndProgress = { status, pct ->
+                            _editorState.update { state ->
+                                state.copy(
+                                    jobStage = inferStage(pct, status),
+                                    processingStatus = status.replaceFirstChar { c -> c.uppercase() },
+                                    processingProgress = pct.coerceIn(state.processingProgress, 99)
+                                )
+                            }
+                            handleProgressPersist(pct)
+                        }
+                    )
+                } else {
+                    VideoProcessingEngine.processVideo(
+                        context = context,
+                        sourceUri = sourceUri,
+                        sourceMetadata = validMeta,
+                        adjustments = adjustments,
+                        exportConfig = exportConfig,
+                        isCompressionWorkflow = isCompressionWorkflow,
+                        isPausedProvider = { pauseFlag.get() },
+                        onDetailedProgress = handleDetailedProgress,
+                        onProgress = handleProgressPersist
+                    )
+                }
+
+                processResult.onSuccess { output ->
+                    val completedJob = initialJob.copy(
                         status = "completed",
                         progressPercent = 100,
                         outputFilePath = output.outputUri.toString(),
-                        outputSizeBytes = output.outputSizeBytes
+                        outputSizeBytes = output.outputSizeBytes,
+                        updatedAtMillis = System.currentTimeMillis()
                     )
-                    firestoreRepository.saveExportRecord(
-                        FirestoreExportRecord(
-                            id = exportId,
-                            userId = authenticatedUserId,
-                            jobId = jobId,
-                            fileName = output.fileName,
-                            originalSizeBytes = output.originalSizeBytes,
-                            outputSizeBytes = output.outputSizeBytes,
-                            savedPercent = output.savedPercent.toLong(),
-                            resolution = output.resolutionLabel,
-                            fps = output.fps.toLong(),
-                            codec = output.codec,
-                            containerFormat = output.containerFormat,
-                            durationMs = output.durationMs,
-                            localUri = output.outputUri.toString()
-                        ),
-                        customId = exportId
-                    )
-                }
+                    localDao.upsertJob(LocalJobEntity.fromDomain(completedJob))
 
-                val outThumb = VideoProcessingEngine.extractThumbnail(context, output.outputUri)
-                _editorState.update { state ->
-                    state.copy(
-                        isProcessing = false,
-                        isPaused = false,
-                        activeJobId = null,
-                        processingProgress = 100,
-                        processingStatus = "Completed",
-                        lastCompletedOutput = output,
-                        videoThumbnail = outThumb ?: state.videoThumbnail,
-                        activeScreen = PrimaryScreen.ProcessingComplete
-                    )
-                }
-            }.onFailure { err ->
-                if (err is CancellationException) return@onFailure
-                val failedJob = initialJob.copy(
-                    status = "failed",
-                    errorCode = "ENCODE_ERROR",
-                    errorMessage = err.localizedMessage ?: "Encoding failed",
-                    updatedAtMillis = System.currentTimeMillis()
-                )
-                localDao.upsertJob(LocalJobEntity.fromDomain(failedJob))
-                if (authenticatedUserId != null) {
-                    firestoreRepository.updateJobProgress(
+                    val exportId = "exp_${UUID.randomUUID().toString().replace("-", "").take(12)}"
+                    val exportItem = ExportItem(
+                        id = exportId,
                         jobId = jobId,
+                        fileName = output.fileName,
+                        originalSizeBytes = output.originalSizeBytes,
+                        outputSizeBytes = output.outputSizeBytes,
+                        savedPercent = output.savedPercent,
+                        resolution = "${output.width}×${output.height} (${output.resolutionLabel})",
+                        fps = output.fps,
+                        codec = output.codec,
+                        containerFormat = output.containerFormat,
+                        durationMs = output.durationMs,
+                        localUri = output.outputUri.toString()
+                    )
+                    localDao.upsertExport(LocalExportEntity.fromDomain(exportItem))
+
+                    if (authenticatedUserId != null) {
+                        firestoreRepository.updateJobProgress(
+                            jobId = jobId,
+                            status = "completed",
+                            progressPercent = 100,
+                            outputFilePath = output.outputUri.toString(),
+                            outputSizeBytes = output.outputSizeBytes
+                        )
+                        firestoreRepository.saveExportRecord(
+                            FirestoreExportRecord(
+                                id = exportId,
+                                userId = authenticatedUserId,
+                                jobId = jobId,
+                                fileName = output.fileName,
+                                originalSizeBytes = output.originalSizeBytes,
+                                outputSizeBytes = output.outputSizeBytes,
+                                savedPercent = output.savedPercent.toLong(),
+                                resolution = output.resolutionLabel,
+                                fps = output.fps.toLong(),
+                                codec = output.codec,
+                                containerFormat = output.containerFormat,
+                                durationMs = output.durationMs,
+                                localUri = output.outputUri.toString()
+                            ),
+                            customId = exportId
+                        )
+                    }
+
+                    val outThumb = VideoProcessingEngine.extractThumbnail(context, output.outputUri)
+                    _editorState.update { state ->
+                        state.copy(
+                            isProcessing = false,
+                            isPaused = false,
+                            activeJobId = null,
+                            jobStage = JobStage.Completed,
+                            processingProgress = 100,
+                            processingStatus = "Completed",
+                            lastCompletedOutput = output,
+                            videoThumbnail = outThumb ?: state.videoThumbnail,
+                            activeScreen = PrimaryScreen.ProcessingComplete
+                        )
+                    }
+                }.onFailure { err ->
+                    if (err is CancellationException) return@onFailure
+                    val failedJob = initialJob.copy(
                         status = "failed",
-                        progressPercent = _editorState.value.processingProgress,
                         errorCode = "ENCODE_ERROR",
-                        errorMessage = err.localizedMessage ?: "Encoding failed"
+                        errorMessage = err.localizedMessage ?: "Encoding failed",
+                        updatedAtMillis = System.currentTimeMillis()
                     )
+                    localDao.upsertJob(LocalJobEntity.fromDomain(failedJob))
+                    if (authenticatedUserId != null) {
+                        firestoreRepository.updateJobProgress(
+                            jobId = jobId,
+                            status = "failed",
+                            progressPercent = _editorState.value.processingProgress,
+                            errorCode = "ENCODE_ERROR",
+                            errorMessage = err.localizedMessage ?: "Encoding failed"
+                        )
+                    }
+                    _editorState.update {
+                        it.copy(
+                            isProcessing = false,
+                            isPaused = false,
+                            activeJobId = null,
+                            jobStage = JobStage.Failed,
+                            processingStatus = "Failed",
+                            statusMessage = "Processing failed: ${err.localizedMessage ?: "Encoder error"}"
+                        )
+                    }
                 }
-                _editorState.update {
-                    it.copy(
-                        isProcessing = false,
-                        isPaused = false,
-                        activeJobId = null,
-                        processingStatus = "Failed",
-                        statusMessage = "Processing failed: ${err.localizedMessage ?: "Encoder error"}"
-                    )
-                }
+            } finally {
+                tickerJob.cancel()
             }
         }
     }

@@ -173,4 +173,54 @@ class ExampleUnitTest {
         assertTrue(maxCmd.contains("minterpolate"))
         assertTrue(maxCmd.contains("-preset slow"))
     }
+
+    @Test
+    fun `verify Optical Flow interpolation, Creative Film Filters, 3D LUTs, RGB Curves, 8K and ProRes pipeline`() {
+        val adjustments = EnhancementAdjustments(
+            creativeFilter = com.example.domain.model.CreativeFilterPreset.KodakPortra400,
+            filterIntensity = 80,
+            lutPreset = com.example.domain.model.LutPreset.Kodak2383Print,
+            rgbCurvePreset = com.example.domain.model.RgbCurvePreset.CinemaSCurve,
+            superResolution = 30,
+            debanding = 20,
+            filmGrain = 15,
+            artifactReduction = 15,
+            skinToneProtection = true,
+            motionInterpolationMode = com.example.domain.model.MotionInterpolationMode.OpticalFlowHighQuality,
+            sceneCutDetection = true,
+            videoStabilization = true,
+            slowMotionFactor = 0.5f
+        )
+        val exportConfig = ExportConfiguration(
+            resolution = "8K",
+            fps = 90,
+            codec = "ProRes",
+            containerFormat = "MOV",
+            rateControl = "CBR",
+            performanceMode = ProcessingPerformanceMode.Max
+        )
+
+        val (w8k, h8k) = exportConfig.targetDimensionsPx(3840, 2160)
+        assertEquals(7680, w8k)
+        assertEquals(4320, h8k)
+
+        val cmd = VideoProcessingEngine.buildFfmpegCommand(
+            inputPath = "master.mov",
+            outputPath = "master_8k.mov",
+            adjustments = adjustments,
+            exportConfig = exportConfig,
+            sourceWidth = 3840,
+            sourceHeight = 2160
+        ).joinToString(" ")
+
+        assertTrue(cmd.contains("minterpolate=fps=90:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1:scd=fdiff"))
+        assertTrue(cmd.contains("deshake"))
+        assertTrue(cmd.contains("setpts=2.00*PTS"))
+        assertTrue(cmd.contains("gradfun="))
+        assertTrue(cmd.contains("noise=alls="))
+        assertTrue(cmd.contains("curves="))
+        assertTrue(cmd.contains("prores_ks"))
+    }
 }
+
+

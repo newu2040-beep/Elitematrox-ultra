@@ -82,6 +82,8 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.domain.model.ExportItem
 import com.example.domain.model.JobItem
+import com.example.domain.model.JobStage
+import com.example.domain.model.ProcessingPerformanceMode
 import com.example.domain.model.VideoMetadata
 import com.example.ui.theme.LocalNeumorphicColors
 import com.example.ui.theme.NeumorphicCard
@@ -104,10 +106,15 @@ fun HomeDashboardScreen(
     activeJobs: List<JobItem>,
     isProcessing: Boolean,
     isPaused: Boolean = false,
+    jobStage: JobStage = JobStage.Processing,
     processingProgress: Int,
     processingStatus: String,
     elapsedTimeMs: Long = 0L,
     estimatedRemainingMs: Long = 0L,
+    processingSpeedLabel: String = "",
+    performanceMode: ProcessingPerformanceMode = ProcessingPerformanceMode.Elite,
+    freeStorageBytes: Long = 0L,
+    onSelectPerformanceMode: (ProcessingPerformanceMode) -> Unit = {},
     onPauseProcessing: () -> Unit = {},
     onResumeProcessing: () -> Unit = {},
     onCancelProcessing: () -> Unit = {},
@@ -400,7 +407,7 @@ fun HomeDashboardScreen(
             }
         }
 
-        // Active Processing Queue Progress Banner (with Pause/Resume/Cancel and Elapsed/ETA)
+        // Active Processing Queue Progress Banner (with Stage badge, live Speed, Elapsed/ETA, and Pause/Resume/Cancel)
         if (isProcessing) {
             Spacer(modifier = Modifier.height(metrics.compactSpacing))
             NeumorphicCard(
@@ -415,17 +422,41 @@ fun HomeDashboardScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(neu.accentPrimary.copy(alpha = 0.14f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = if (isPaused) "PAUSED" else jobStage.label.uppercase(),
+                                        color = neu.accentPrimary,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 9.5.sp
+                                        )
+                                    )
+                                }
+                                Text(
+                                    text = processingStatus,
+                                    color = neu.textPrimary,
+                                    style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            val speedSuffix = if (processingSpeedLabel.isNotBlank()) " • $processingSpeedLabel" else ""
                             Text(
-                                text = processingStatus,
-                                color = neu.textPrimary,
-                                style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp),
+                                text = "Elapsed: ${EliteMatrixViewModel.formatDurationSeconds(elapsedTimeMs)} • ETA: ${if (estimatedRemainingMs > 0L) EliteMatrixViewModel.formatDurationSeconds(estimatedRemainingMs) else "< 3s"}$speedSuffix",
+                                color = neu.textSecondary,
+                                style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.5.sp),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = "Elapsed: ${EliteMatrixViewModel.formatDurationSeconds(elapsedTimeMs)} • ETA: ${if (estimatedRemainingMs > 0L) EliteMatrixViewModel.formatDurationSeconds(estimatedRemainingMs) else "Calculating..."}",
-                                color = neu.textSecondary,
-                                style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.5.sp)
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -536,23 +567,37 @@ fun HomeDashboardScreen(
 
         Spacer(modifier = Modifier.height(metrics.sectionSpacing))
 
-        // Quick Tools Strip (Info, Preset, Converter, Calculator) per PRD Section 5
+        // Quick Studio Strip (2 rows of 3 spacious chips so labels never truncate)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             QuickToolMiniChip(
-                label = "Info",
+                label = "Inspector",
                 icon = Icons.Outlined.Info,
                 modifier = Modifier.weight(1f),
                 onClick = { onOpenToolModal(ActiveToolModal.VideoInspector) }
             )
             QuickToolMiniChip(
-                label = "Preset",
+                label = "Presets",
                 icon = Icons.Outlined.BookmarkBorder,
                 modifier = Modifier.weight(1f),
                 onClick = { onOpenToolModal(ActiveToolModal.PresetManager) }
             )
+            QuickToolMiniChip(
+                label = "Film Filters",
+                icon = Icons.Outlined.AutoFixHigh,
+                modifier = Modifier.weight(1f),
+                onClick = { onNavigatePrimary(PrimaryScreen.EnhanceVideo) }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             QuickToolMiniChip(
                 label = "Converter",
                 icon = Icons.Outlined.SwapHoriz,
@@ -560,11 +605,77 @@ fun HomeDashboardScreen(
                 onClick = { onOpenToolModal(ActiveToolModal.FormatConverter) }
             )
             QuickToolMiniChip(
-                label = "Calculator",
+                label = "Bitrate Calc",
                 icon = Icons.Outlined.Calculate,
                 modifier = Modifier.weight(1f),
                 onClick = { onOpenToolModal(ActiveToolModal.BitrateCalculator) }
             )
+            QuickToolMiniChip(
+                label = "Optical Flow",
+                icon = Icons.Outlined.Tune,
+                modifier = Modifier.weight(1f),
+                onClick = { onNavigatePrimary(PrimaryScreen.ExportSettings) }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Compact Engine Performance Mode & Device Storage Readiness Strip
+        NeumorphicCard(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = 16.dp,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Engine: ${performanceMode.title} (${performanceMode.badge})",
+                        color = neu.textPrimary,
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.5.sp
+                        )
+                    )
+                    val freeGb = if (freeStorageBytes > 0L) {
+                        "%.1f GB free".format(freeStorageBytes.toDouble() / (1024.0 * 1024.0 * 1024.0))
+                    } else "Storage ready"
+                    Text(
+                        text = "${performanceMode.subtitle} • $freeGb",
+                        color = neu.textSecondary,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    ProcessingPerformanceMode.entries.forEach { mode ->
+                        val active = performanceMode == mode
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (active) neu.accentPrimary else neu.surfaceInset
+                                )
+                                .clickable { onSelectPerformanceMode(mode) }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = mode.badge,
+                                color = if (active) Color.White else neu.textSecondary,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 9.5.sp
+                                )
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(metrics.sectionSpacing))

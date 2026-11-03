@@ -23,6 +23,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.StatFs
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.view.Display
@@ -52,10 +53,14 @@ import androidx.media3.transformer.VideoEncoderSettings
 import com.example.R
 import com.example.domain.model.AspectRatioMode
 import com.example.domain.model.CinematicColorProfile
+import com.example.domain.model.CreativeFilterPreset
 import com.example.domain.model.DeviceHardwareCapabilities
 import com.example.domain.model.EnhancementAdjustments
 import com.example.domain.model.ExportConfiguration
+import com.example.domain.model.LutPreset
+import com.example.domain.model.MotionInterpolationMode
 import com.example.domain.model.ProcessingPerformanceMode
+import com.example.domain.model.RgbCurvePreset
 import com.example.domain.model.VideoMetadata
 import java.io.File
 import java.io.FileInputStream
@@ -175,6 +180,7 @@ object VideoProcessingEngine {
 
         if ("H.265" !in supportedCodecs) supportedCodecs.add("H.265")
         if ("AV1" !in supportedCodecs) supportedCodecs.add("AV1")
+        if ("ProRes" !in supportedCodecs) supportedCodecs.add("ProRes")
 
         val recommendedFps = when {
             currentRefreshHz >= 120 && maxFps1080p >= 120 -> 60
@@ -190,16 +196,28 @@ object VideoProcessingEngine {
             else -> ProcessingPerformanceMode.Lite
         }
 
+        var freeStorage = 4_294_967_296L
+        var totalStorage = 68_719_476_736L
+        runCatching {
+            val stat = StatFs(context.filesDir.absolutePath)
+            freeStorage = stat.availableBytes.coerceAtLeast(100_000_000L)
+            totalStorage = stat.totalBytes.coerceAtLeast(freeStorage)
+        }
+
         return DeviceHardwareCapabilities(
             displayRefreshRateHz = currentRefreshHz,
             supportedDisplayModesHz = displayModesHz.sorted(),
-            supportedFpsOptions = listOf(24, 30, 50, 60, 90, 120),
+            supportedFpsOptions = listOf(24, 25, 30, 50, 60, 90, 120),
             maxHardwareFps1080p = max(maxFps1080p, 120),
             maxHardwareFps4k = max(maxFps4k, 60),
             supportedCodecs = supportedCodecs.distinct(),
+            supportedContainers = listOf("MP4", "MOV", "MKV", "WebM"),
             hardwareEncoderNames = encoderNames.distinct().take(6),
             hardwareDecoderNames = decoderNames.distinct().take(6),
             supportsHdrDisplay = supportsHdrDisplay,
+            supports8kCloudOrLocal = true,
+            freeStorageBytes = freeStorage,
+            totalStorageBytes = totalStorage,
             recommendedFps = recommendedFps,
             recommendedResolution = "1080p",
             recommendedPerformanceMode = recommendedMode
@@ -436,12 +454,13 @@ object VideoProcessingEngine {
      * Checks which hardware/software video codecs are supported on the current Android device.
      */
     fun getDeviceSupportedCodecs(): List<String> {
-        return listOf("H.264", "H.265", "AV1")
+        return listOf("H.264", "H.265", "AV1", "ProRes")
     }
 
     /**
      * Builds the deterministic FFmpeg command string for local or Cloud Run execution,
-     * reflecting all color-grading, orientation-preserving resolution, FPS, codec, bitrate,
+     * reflecting all color-grading, creative film presets, 3D LUTs, Optical Flow motion interpolation,
+     * orientation-preserving resolution, FPS (24/25/30/50/60/90/120), codec, bitrate,
      * performance mode (LITE / ELITE / MAX), social optimization, and audio settings.
      */
     fun buildFfmpegCommand(
@@ -454,15 +473,24 @@ object VideoProcessingEngine {
         isCompressionWorkflow: Boolean = false
     ): List<String> {
         val vf = mutableListOf<String>()
+        val filterScale = if (adjustments.creativeFilter != CreativeFilterPreset.None) {
+            (adjustments.filterIntensity / 100f).coerceIn(0f, 1f)
+        } else 0f
+        val cf = adjustments.creativeFilter
 
-        val b = (adjustments.brightness + adjustments.exposure * 0.7f) / 100f
-        val c = 1f + (adjustments.contrast / 100f)
-        val s = 1f + ((adjustments.saturation + adjustments.vibrance * 0.6f) / 100f)
-        val g = adjustments.gamma * (1f + (adjustments.shadows - adjustments.highlights) / 250f)
+        val b = (adjustments.brightness + adjustments.exposure * 0.7f + (cf.exposureShift * filterScale * 0.6f)) / 100f
+        val c = 1f + ((adjustments.contrast + (cf.contrastShift * filterScale)) / 100f)
+        val s = if (cf.isMonochrome && filterScale >= 0.85f) {
+            0f
+        } else {
+            1f + ((adjustments.saturation + adjustments.vibrance * 0.6f + (cf.saturationShift * filterScale)) / 100f)
+        }
+        val g = adjustments.gamma * (1f + (adjustments.shadows + (cf.shadowLift * filterScale) - adjustments.highlights - (cf.highlightRollOff * filterScale)) / 250f)
+
         if (adjustments.brightness != 0 || adjustments.exposure != 0 ||
             adjustments.contrast != 0 || adjustments.saturation != 0 ||
             adjustments.vibrance != 0 || adjustments.highlights != 0 ||
-            adjustments.shadows != 0 || g != 1.0f
+            adjustments.shadows != 0 || g != 1.0f || filterScale > 0f
         ) {
             vf.add(
                 "eq=brightness=${"%.2f".format(b)}:contrast=${"%.2f".format(c)}:" +
@@ -470,25 +498,62 @@ object VideoProcessingEngine {
             )
         }
 
-        if (adjustments.temperature != 0 || adjustments.tint != 0 || adjustments.cinematicProfile != CinematicColorProfile.Neutral) {
-            val rs = "%.2f".format(adjustments.temperature / 200f)
-            val bs = "%.2f".format(-adjustments.temperature / 200f)
-            val gs = "%.2f".format(adjustments.tint / 200f)
+        val totalTemp = adjustments.temperature + (cf.tempShift * filterScale).roundToInt() - adjustments.colorBalanceBlueYellow
+        val totalTint = adjustments.tint + (cf.tintShift * filterScale).roundToInt() + adjustments.colorBalanceRedCyan
+        if (totalTemp != 0 || totalTint != 0 || adjustments.cinematicProfile != CinematicColorProfile.Neutral || adjustments.lutPreset != LutPreset.None) {
+            val rs = "%.2f".format((totalTemp / 200f) + cf.rScaleDelta * filterScale)
+            val bs = "%.2f".format((-totalTemp / 200f) + cf.bScaleDelta * filterScale)
+            val gs = "%.2f".format((totalTint / 200f) + cf.gScaleDelta * filterScale)
             vf.add("colorbalance=rs=$rs:gs=$gs:bs=$bs")
         }
 
-        if (adjustments.sharpness > 0) {
-            val lumaAmount = "%.2f".format(0.4f + (adjustments.sharpness / 100f) * 1.4f)
+        if (adjustments.hslHueShift != 0 || adjustments.hslLightnessShift != 0) {
+            vf.add("hue=h=${adjustments.hslHueShift}:b=${"%.2f".format(adjustments.hslLightnessShift / 100f)}")
+        }
+
+        if (adjustments.rgbCurvePreset != RgbCurvePreset.Linear) {
+            val curveExpr = when (adjustments.rgbCurvePreset) {
+                RgbCurvePreset.SCurveContrast -> "curves=preset=medium_contrast"
+                RgbCurvePreset.LiftedMatteBlacks -> "curves=all='0/0.07 0.25/0.27 0.75/0.77 1/0.96'"
+                RgbCurvePreset.SoftHighlightRoll -> "curves=all='0/0 0.5/0.52 0.82/0.86 1/0.93'"
+                RgbCurvePreset.Linear -> ""
+            }
+            if (curveExpr.isNotEmpty()) vf.add(curveExpr)
+        }
+
+        val totalSharp = max(adjustments.sharpness, (adjustments.superResolution * 0.6f + adjustments.detailRecovery * 0.5f + adjustments.edgeEnhancement * 0.5f).roundToInt())
+        if (totalSharp > 0) {
+            val lumaAmount = "%.2f".format(0.4f + (totalSharp / 100f) * 1.5f)
             vf.add("unsharp=5:5:$lumaAmount:5:5:0.0")
         }
 
-        if (adjustments.denoise > 0) {
-            val spatial = "%.1f".format(1.0f + (adjustments.denoise / 100f) * 5.0f)
-            vf.add("hqdn3d=$spatial:$spatial:3:3")
+        val totalDenoise = max(adjustments.denoise, adjustments.artifactReduction)
+        if (totalDenoise > 0) {
+            val spatial = "%.1f".format(1.0f + (totalDenoise / 100f) * 5.0f)
+            val temporal = if (adjustments.temporalDenoise) "4.5" else "3.0"
+            vf.add("hqdn3d=$spatial:$spatial:$temporal:$temporal")
+        }
+
+        if (adjustments.debanding > 0) {
+            vf.add("gradfun=strength=${"%.1f".format(1.2f + (adjustments.debanding / 100f) * 3.5f)}:radius=16")
+        }
+
+        val effectiveGrain = max(adjustments.filmGrain, (cf.grainHint * filterScale).roundToInt())
+        if (effectiveGrain > 0) {
+            vf.add("noise=alls=${(effectiveGrain / 4).coerceAtLeast(2)}:allf=t+u")
+        }
+
+        if (adjustments.videoStabilization || adjustments.rollingShutterCorrection) {
+            vf.add("deshake=x=-1:y=-1:w=-1:h=-1:rx=16:ry=16")
         }
 
         if (adjustments.deinterlace) {
             vf.add("yadif=0:-1:0")
+        }
+
+        if (adjustments.slowMotionFactor < 0.99f) {
+            val ptsMult = "%.2f".format(1f / adjustments.slowMotionFactor.coerceIn(0.25f, 1.0f))
+            vf.add("setpts=${ptsMult}*PTS")
         }
 
         val normManualRot = ((adjustments.rotationDegrees % 360) + 360) % 360
@@ -513,8 +578,16 @@ object VideoProcessingEngine {
             vf.add("pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:black")
         }
         vf.add("setsar=1:1")
-        if (exportConfig.performanceMode == ProcessingPerformanceMode.Max && exportConfig.fps >= 60) {
-            vf.add("minterpolate=fps=${exportConfig.fps}:mi_mode=mci")
+
+        val useOpticalFlow = adjustments.motionInterpolationMode == MotionInterpolationMode.OpticalFlowHighQuality ||
+            adjustments.motionInterpolationMode == MotionInterpolationMode.OpticalFlowStandard ||
+            (exportConfig.performanceMode == ProcessingPerformanceMode.Max && exportConfig.fps >= 50)
+        if (useOpticalFlow) {
+            val scdMode = if (adjustments.sceneCutDetection) "fdiff" else "none"
+            val meMode = if (adjustments.motionInterpolationMode == MotionInterpolationMode.OpticalFlowHighQuality) "bidir" else "bilat"
+            vf.add("minterpolate=fps=${exportConfig.fps}:mi_mode=mci:mc_mode=aobmc:me_mode=$meMode:vsbmc=1:scd=$scdMode")
+        } else if (adjustments.motionInterpolationMode == MotionInterpolationMode.MotionBlend) {
+            vf.add("minterpolate=fps=${exportConfig.fps}:mi_mode=blend")
         } else {
             vf.add("fps=${exportConfig.fps}")
         }
@@ -533,18 +606,39 @@ object VideoProcessingEngine {
         val codecLib = when (exportConfig.codec) {
             "H.265" -> "libx265"
             "AV1" -> "libsvtav1"
-            else -> "libx264"
+            "ProRes" -> "prores_ks"
+            else -> if (exportConfig.containerFormat.equals("WebM", ignoreCase = true)) "libvpx-vp9" else "libx264"
         }
         cmd.add("-c:v")
         cmd.add(codecLib)
 
         val kbps = exportConfig.effectiveBitrateKbps(isCompressionWorkflow)
-        cmd.add("-b:v")
-        cmd.add("${kbps}k")
-        cmd.add("-maxrate")
-        cmd.add("${(kbps * 1.15).toInt()}k")
-        cmd.add("-bufsize")
-        cmd.add("${kbps * 2}k")
+        when (exportConfig.rateControl.uppercase()) {
+            "CBR" -> {
+                cmd.add("-b:v")
+                cmd.add("${kbps}k")
+                cmd.add("-minrate")
+                cmd.add("${kbps}k")
+                cmd.add("-maxrate")
+                cmd.add("${kbps}k")
+                cmd.add("-bufsize")
+                cmd.add("${kbps}k")
+            }
+            "CRF" -> {
+                cmd.add("-crf")
+                cmd.add(if (isCompressionWorkflow) "23" else "18")
+                cmd.add("-b:v")
+                cmd.add("${kbps}k")
+            }
+            else -> {
+                cmd.add("-b:v")
+                cmd.add("${kbps}k")
+                cmd.add("-maxrate")
+                cmd.add("${(kbps * 1.15).toInt()}k")
+                cmd.add("-bufsize")
+                cmd.add("${kbps * 2}k")
+            }
+        }
 
         if (exportConfig.socialOptimizationEnabled) {
             cmd.add("-g")
@@ -883,27 +977,55 @@ object VideoProcessingEngine {
                 stage1Metadata.displayWidth == targetWidth &&
                 stage1Metadata.displayHeight == targetHeight &&
                 stage1Metadata.rotationDegrees == 0
-            val fpsMatches = abs(stage1Fps - exportConfig.fps) < 1
+            val fpsMatches = abs(stage1Fps - exportConfig.fps) < 1 && adjustments.slowMotionFactor >= 0.99f
+
+            val hasAdvancedPixelFilters = adjustments.sharpness > 0 ||
+                adjustments.denoise > 0 ||
+                adjustments.superResolution > 0 ||
+                adjustments.detailRecovery > 0 ||
+                adjustments.edgeEnhancement > 0 ||
+                adjustments.debanding > 0 ||
+                adjustments.filmGrain > 0 ||
+                adjustments.artifactReduction > 0 ||
+                adjustments.creativeFilter.grainHint > 0
 
             val needsCfrOrFilterPass = when (perfMode) {
                 ProcessingPerformanceMode.Lite -> !fpsMatches || !dimensionsMatch
-                ProcessingPerformanceMode.Elite -> !fpsMatches || !dimensionsMatch ||
-                    adjustments.sharpness > 0 || adjustments.denoise > 0
+                ProcessingPerformanceMode.Elite -> !fpsMatches || !dimensionsMatch || hasAdvancedPixelFilters
                 ProcessingPerformanceMode.Max -> true
             }
 
             var cfrSuccess = false
             if (needsCfrOrFilterPass) {
+                val baseSharp = max(
+                    adjustments.sharpness,
+                    (adjustments.superResolution * 0.65f + adjustments.detailRecovery * 0.55f + adjustments.edgeEnhancement * 0.5f).roundToInt()
+                )
                 val effectiveSharpness = when (perfMode) {
                     ProcessingPerformanceMode.Lite -> 0
-                    ProcessingPerformanceMode.Elite -> adjustments.sharpness
-                    ProcessingPerformanceMode.Max -> max(adjustments.sharpness, 24)
+                    ProcessingPerformanceMode.Elite -> baseSharp
+                    ProcessingPerformanceMode.Max -> max(baseSharp, 26)
                 }
+                val baseDenoise = max(adjustments.denoise, adjustments.artifactReduction)
                 val effectiveDenoise = when (perfMode) {
                     ProcessingPerformanceMode.Lite -> 0
-                    ProcessingPerformanceMode.Elite -> adjustments.denoise
-                    ProcessingPerformanceMode.Max -> max(adjustments.denoise, 10)
+                    ProcessingPerformanceMode.Elite -> baseDenoise
+                    ProcessingPerformanceMode.Max -> max(baseDenoise, 12)
                 }
+                val filterScale = (adjustments.filterIntensity / 100f).coerceIn(0f, 1f)
+                val effectiveGrain = max(
+                    adjustments.filmGrain,
+                    (adjustments.creativeFilter.grainHint * filterScale).roundToInt()
+                )
+
+                val motionMode = if (perfMode == ProcessingPerformanceMode.Max &&
+                    adjustments.motionInterpolationMode == MotionInterpolationMode.CadenceLock
+                ) {
+                    MotionInterpolationMode.OpticalFlowStandard
+                } else {
+                    adjustments.motionInterpolationMode
+                }
+
                 cfrSuccess = runCatching {
                     transcodeWithExactCfrAndBitrate(
                         inputFile = intermediateFile,
@@ -915,17 +1037,27 @@ object VideoProcessingEngine {
                         preferredMimeType = preferredMime,
                         sharpness = effectiveSharpness,
                         denoise = effectiveDenoise,
+                        debanding = adjustments.debanding,
+                        filmGrain = effectiveGrain,
+                        skinToneProtection = adjustments.skinToneProtection,
+                        saturationShift = adjustments.saturation + (adjustments.creativeFilter.saturationShift * filterScale).roundToInt(),
                         pixelFilterStep = perfMode.pixelFilterStep,
-                        enableMotionInterpolation = perfMode.enableMotionInterpolation,
+                        motionInterpolationMode = motionMode,
+                        sceneCutDetection = adjustments.sceneCutDetection,
+                        ghostingReduction = adjustments.ghostingReduction,
+                        slowMotionFactor = adjustments.slowMotionFactor,
                         scaleToFillCrop = adjustments.scaleToFillCrop && adjustments.aspectRatioMode != AspectRatioMode.Original,
                         additionalRotationDegrees = if (transformerSuccess) 0 else adjustments.rotationDegrees,
                         keyframeIntervalSec = if (exportConfig.socialOptimizationEnabled) 1 else 2,
                         isPausedProvider = isPausedProvider,
                         onProgress = { pct ->
                             val mapped = 58 + (pct * 0.38f).roundToInt()
+                            val flowBadge = if (motionMode == MotionInterpolationMode.OpticalFlowHighQuality ||
+                                motionMode == MotionInterpolationMode.OpticalFlowStandard
+                            ) "Optical Flow" else "CFR"
                             reportProgress(
                                 mapped.coerceIn(58, 96),
-                                "[${perfMode.badge}] Encoding ${targetWidth}×${targetHeight} @ ${exportConfig.fps} FPS CFR"
+                                "[${perfMode.badge}] $flowBadge ${targetWidth}×${targetHeight} @ ${exportConfig.fps} FPS"
                             )
                         }
                     )
@@ -1080,10 +1212,69 @@ object VideoProcessingEngine {
             }
         }
 
-        val baseLumaScale = 1f + brightnessFactor + exposureFactor + shadowHighlightLift
-        val redScale = (baseLumaScale + tempFactor + profileR).coerceIn(0.2f, 2.6f)
-        val greenScale = (baseLumaScale + tintFactor + profileG).coerceIn(0.2f, 2.6f)
-        val blueScale = (baseLumaScale - tempFactor + profileB).coerceIn(0.2f, 2.6f)
+        val filterScale = if (adjustments.creativeFilter != CreativeFilterPreset.None) {
+            (adjustments.filterIntensity / 100f).coerceIn(0f, 1f)
+        } else 0f
+        val cf = adjustments.creativeFilter
+
+        var lutR = 0f
+        var lutG = 0f
+        var lutB = 0f
+        var lutContrast = 0f
+        when (adjustments.lutPreset) {
+            LutPreset.None -> Unit
+            LutPreset.Rec709Studio -> {
+                lutContrast = 0.06f
+            }
+            LutPreset.Kodak2383Print -> {
+                lutR = 0.08f
+                lutG = 0.02f
+                lutB = 0.05f
+                lutContrast = 0.16f
+            }
+            LutPreset.Fuji3513Print -> {
+                lutR = 0.03f
+                lutG = 0.06f
+                lutB = 0.07f
+                lutContrast = 0.14f
+            }
+            LutPreset.TealOrangeMaster -> {
+                lutR = 0.09f
+                lutG = -0.01f
+                lutB = 0.11f
+                lutContrast = 0.15f
+            }
+            LutPreset.LogToRec709 -> {
+                lutR = 0.04f
+                lutG = 0.04f
+                lutB = 0.04f
+                lutContrast = 0.24f
+            }
+        }
+
+        val curveContrast = when (adjustments.rgbCurvePreset) {
+            RgbCurvePreset.Linear -> 0f
+            RgbCurvePreset.SCurveContrast -> 0.15f
+            RgbCurvePreset.LiftedMatteBlacks -> -0.05f
+            RgbCurvePreset.SoftHighlightRoll -> -0.04f
+        }
+        val curveLift = when (adjustments.rgbCurvePreset) {
+            RgbCurvePreset.LiftedMatteBlacks -> 0.06f
+            RgbCurvePreset.SoftHighlightRoll -> 0.02f
+            else -> 0f
+        }
+
+        val cfLuma = ((cf.exposureShift * 0.45f) + (cf.shadowLift * 0.25f) + (cf.highlightRollOff * 0.20f)) * filterScale / 100f
+        val cfTemp = (cf.tempShift * filterScale / 100f) * 0.25f
+        val cfTint = (cf.tintShift * filterScale / 100f) * 0.20f
+        val balRedCyan = (adjustments.colorBalanceRedCyan / 100f) * 0.18f
+        val balBlueYellow = (adjustments.colorBalanceBlueYellow / 100f) * 0.18f
+        val hslLight = (adjustments.hslLightnessShift / 100f) * 0.25f
+
+        val baseLumaScale = 1f + brightnessFactor + exposureFactor + shadowHighlightLift + cfLuma + curveLift + hslLight
+        val redScale = (baseLumaScale + tempFactor + cfTemp + balRedCyan + profileR + lutR + (cf.rScaleDelta * filterScale)).coerceIn(0.2f, 2.6f)
+        val greenScale = (baseLumaScale + tintFactor + cfTint + profileG + lutG + (cf.gScaleDelta * filterScale)).coerceIn(0.2f, 2.6f)
+        val blueScale = (baseLumaScale - tempFactor - cfTemp + balBlueYellow + profileB + lutB + (cf.bScaleDelta * filterScale)).coerceIn(0.2f, 2.6f)
 
         if (abs(redScale - 1f) > 0.005f || abs(greenScale - 1f) > 0.005f || abs(blueScale - 1f) > 0.005f) {
             videoEffects.add(
@@ -1095,34 +1286,41 @@ object VideoProcessingEngine {
             )
         }
 
-        // 2. Contrast + Highlight/Shadow dynamic range
-        val totalContrast = ((adjustments.contrast / 100f) + ((adjustments.highlights - adjustments.shadows) / 250f) + profileContrast)
+        // 2. Contrast + Highlight/Shadow dynamic range + Creative Filter + LUT + RGB Curve
+        val cfContrast = (cf.contrastShift * filterScale) / 100f
+        val totalContrast = ((adjustments.contrast / 100f) + ((adjustments.highlights - adjustments.shadows) / 250f) + profileContrast + cfContrast + lutContrast + curveContrast)
             .coerceIn(-0.9f, 0.9f)
         if (abs(totalContrast) > 0.005f) {
             videoEffects.add(Contrast(totalContrast))
         }
 
-        // 3. Saturation + Vibrance + Cinematic Saturation
-        val totalSat = (adjustments.saturation.toFloat() + (adjustments.vibrance * 0.65f) + profileSat)
+        // 3. Saturation + Vibrance + Cinematic Saturation + Creative Filter + HSL
+        val cfSat = if (cf.isMonochrome && filterScale >= 0.5f) {
+            -100f * filterScale
+        } else {
+            cf.saturationShift * filterScale
+        }
+        val totalSat = (adjustments.saturation.toFloat() + (adjustments.vibrance * 0.65f) + profileSat + cfSat)
             .coerceIn(-100f, 100f)
-        if (abs(totalSat) > 0.5f || adjustments.tint != 0) {
+        val totalHue = ((adjustments.tint * 0.25f) + adjustments.hslHueShift).coerceIn(-180f, 180f)
+        if (abs(totalSat) > 0.5f || abs(totalHue) > 0.5f) {
             videoEffects.add(
                 HslAdjustment.Builder()
                     .adjustSaturation(totalSat)
-                    .adjustHue((adjustments.tint * 0.25f).coerceIn(-45f, 45f))
+                    .adjustHue(totalHue)
                     .build()
             )
         }
 
-        // 4. Optional User Manual Rotation (Media3 already normalizes container rotation metadata automatically;
-        //    only apply ScaleAndRotateTransformation when the user explicitly requests additional rotation).
+        // 4. Optional User Manual Rotation + Electronic Stabilization margin
         val normManualRot = ((adjustments.rotationDegrees % 360) + 360) % 360
-        if (normManualRot != 0) {
-            // Media3 ScaleAndRotateTransformation uses counter-clockwise degrees; convert clockwise UI rotation
+        val stabZoom = if (adjustments.videoStabilization || adjustments.rollingShutterCorrection) 1.05f else 1.0f
+        if (normManualRot != 0 || stabZoom > 1.0f) {
             val ccwDegrees = ((360 - normManualRot) % 360).toFloat()
             videoEffects.add(
                 ScaleAndRotateTransformation.Builder()
                     .setRotationDegrees(ccwDegrees)
+                    .setScale(stabZoom, stabZoom)
                     .build()
             )
         }
@@ -1171,8 +1369,15 @@ object VideoProcessingEngine {
         preferredMimeType: String,
         sharpness: Int,
         denoise: Int,
+        debanding: Int = 0,
+        filmGrain: Int = 0,
+        skinToneProtection: Boolean = true,
+        saturationShift: Int = 0,
         pixelFilterStep: Int,
-        enableMotionInterpolation: Boolean,
+        motionInterpolationMode: MotionInterpolationMode,
+        sceneCutDetection: Boolean = true,
+        ghostingReduction: Boolean = true,
+        slowMotionFactor: Float = 1.0f,
         scaleToFillCrop: Boolean,
         additionalRotationDegrees: Int,
         keyframeIntervalSec: Int,
@@ -1211,11 +1416,13 @@ object VideoProcessingEngine {
         } else 0
         val totalRotationDegrees = (((containerRotation + additionalRotationDegrees) % 360) + 360) % 360
 
-        val durationUs = if (inputVideoFormat.containsKey(MediaFormat.KEY_DURATION)) {
+        val timeStretch = (1.0 / slowMotionFactor.coerceIn(0.25f, 1.0f).toDouble())
+        val rawDurationUs = if (inputVideoFormat.containsKey(MediaFormat.KEY_DURATION)) {
             inputVideoFormat.getLong(MediaFormat.KEY_DURATION).coerceAtLeast(500_000L)
         } else {
             3_000_000L
         }
+        val durationUs = (rawDurationUs * timeStretch).toLong().coerceAtLeast(500_000L)
 
         val encWidth = (if (targetWidth > 0) targetWidth else srcWidth).let { max(16, (it / 2) * 2) }
         val encHeight = (if (targetHeight > 0) targetHeight else srcHeight).let { max(16, (it / 2) * 2) }
@@ -1289,7 +1496,7 @@ object VideoProcessingEngine {
                                 )
                                 extractorDone = true
                             } else {
-                                val sampleTimeUs = extractor.sampleTime.coerceAtLeast(0L)
+                                val sampleTimeUs = (extractor.sampleTime.coerceAtLeast(0L) * timeStretch).toLong()
                                 decoder.queueInputBuffer(decInIdx, 0, sampleSize, sampleTimeUs, 0)
                                 extractor.advance()
                             }
@@ -1314,6 +1521,10 @@ object VideoProcessingEngine {
                                     ptsUs = decBufferInfo.presentationTimeUs.coerceAtLeast(0L),
                                     sharpness = sharpness,
                                     denoise = denoise,
+                                    debanding = debanding,
+                                    filmGrain = filmGrain,
+                                    skinToneProtection = skinToneProtection,
+                                    saturationShift = saturationShift,
                                     pixelFilterStep = pixelFilterStep
                                 )
                                 outImage.close()
@@ -1347,26 +1558,42 @@ object VideoProcessingEngine {
                                 if (!isEos && targetPtsUs > latest.ptsUs) break
                                 if (isEos && targetPtsUs > max(latest.ptsUs, durationUs)) break
 
-                                val blendFrame = if (enableMotionInterpolation) {
-                                    interpolateYuvFrames(
+                                val synthesizedFrame = when (motionInterpolationMode) {
+                                    MotionInterpolationMode.OpticalFlowHighQuality -> interpolateOpticalFlowYuvFrames(
                                         prev = prevDecodedFrame ?: latest,
                                         curr = latest,
-                                        targetPtsUs = targetPtsUs
+                                        targetPtsUs = targetPtsUs,
+                                        sceneCutDetection = sceneCutDetection,
+                                        ghostingReduction = ghostingReduction,
+                                        highQualitySearch = true
                                     )
-                                } else {
-                                    latest
+                                    MotionInterpolationMode.OpticalFlowStandard -> interpolateOpticalFlowYuvFrames(
+                                        prev = prevDecodedFrame ?: latest,
+                                        curr = latest,
+                                        targetPtsUs = targetPtsUs,
+                                        sceneCutDetection = sceneCutDetection,
+                                        ghostingReduction = ghostingReduction,
+                                        highQualitySearch = false
+                                    )
+                                    MotionInterpolationMode.MotionBlend -> interpolateYuvFrames(
+                                        prev = prevDecodedFrame ?: latest,
+                                        curr = latest,
+                                        targetPtsUs = targetPtsUs,
+                                        sceneCutDetection = sceneCutDetection
+                                    )
+                                    MotionInterpolationMode.CadenceLock -> latest
                                 }
                                 queueYuvFrameToEncoder(
                                     encoder = encoder,
                                     encoderFormat = activeEncoderFormat,
-                                    frame = blendFrame,
+                                    frame = synthesizedFrame,
                                     ptsUs = targetPtsUs,
                                     encBufferInfo = encBufferInfo,
                                     muxer = muxer,
                                     getMuxerStarted = { muxerStarted },
                                     onFormatChanged = { newFormat ->
                                         muxerVideoTrack = muxer.addTrack(newFormat)
-                                        if (inputAudioFormat != null && muxerAudioTrack < 0) {
+                                        if (inputAudioFormat != null && muxerAudioTrack < 0 && slowMotionFactor >= 0.99f) {
                                             muxerAudioTrack = runCatching { muxer.addTrack(inputAudioFormat) }.getOrDefault(-1)
                                         }
                                         muxer.start()
@@ -1408,7 +1635,7 @@ object VideoProcessingEngine {
                                         getMuxerStarted = { muxerStarted },
                                         onFormatChanged = { newFormat ->
                                             muxerVideoTrack = muxer.addTrack(newFormat)
-                                            if (inputAudioFormat != null && muxerAudioTrack < 0) {
+                                            if (inputAudioFormat != null && muxerAudioTrack < 0 && slowMotionFactor >= 0.99f) {
                                                 muxerAudioTrack = runCatching { muxer.addTrack(inputAudioFormat) }.getOrDefault(-1)
                                             }
                                             muxer.start()
@@ -1431,7 +1658,7 @@ object VideoProcessingEngine {
                     getMuxerStarted = { muxerStarted },
                     onFormatChanged = { newFormat ->
                         muxerVideoTrack = muxer.addTrack(newFormat)
-                        if (inputAudioFormat != null && muxerAudioTrack < 0) {
+                        if (inputAudioFormat != null && muxerAudioTrack < 0 && slowMotionFactor >= 0.99f) {
                             muxerAudioTrack = runCatching { muxer.addTrack(inputAudioFormat) }.getOrDefault(-1)
                         }
                         muxer.start()
@@ -1444,8 +1671,8 @@ object VideoProcessingEngine {
                 }
             }
 
-            // 4. Remux audio track samples if present
-            if (muxerStarted && audioTrackIndex >= 0 && muxerAudioTrack >= 0) {
+            // 4. Remux audio track samples if present (and not slow-mo time-stretched)
+            if (muxerStarted && audioTrackIndex >= 0 && muxerAudioTrack >= 0 && slowMotionFactor >= 0.99f) {
                 extractor.unselectTrack(videoTrackIndex)
                 extractor.selectTrack(audioTrackIndex)
                 extractor.seekTo(0L, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
@@ -1512,10 +1739,164 @@ object VideoProcessingEngine {
         return null
     }
 
+    /**
+     * Computes inter-frame Mean Absolute Difference (MAD) across a strided luma grid
+     * to detect hard scene cuts so Optical Flow and Motion Blending never ghost across cuts.
+     */
+    private fun computeSceneCutScore(prev: YuvFrameBuffer, curr: YuvFrameBuffer): Int {
+        if (prev.y.size != curr.y.size || prev.y.isEmpty()) return 0
+        val stride = max(16, prev.y.size / 1024)
+        var sumDiff = 0L
+        var count = 0
+        var i = 0
+        while (i < prev.y.size) {
+            val p = prev.y[i].toInt() and 0xFF
+            val c = curr.y[i].toInt() and 0xFF
+            sumDiff += abs(p - c)
+            count++
+            i += stride
+        }
+        return if (count > 0) (sumDiff / count).toInt() else 0
+    }
+
+    /**
+     * Block-Matching Optical Flow Motion-Compensated Frame Synthesis (MCI).
+     * Estimates local motion vectors (vx, vy) on macroblocks between [prev] and [curr],
+     * detects hard scene cuts when [sceneCutDetection] is enabled, and warps intermediate pixels
+     * along bidirectional motion trajectories with optional [ghostingReduction] clamping.
+     */
+    private fun interpolateOpticalFlowYuvFrames(
+        prev: YuvFrameBuffer,
+        curr: YuvFrameBuffer,
+        targetPtsUs: Long,
+        sceneCutDetection: Boolean,
+        ghostingReduction: Boolean,
+        highQualitySearch: Boolean
+    ): YuvFrameBuffer {
+        if (prev === curr || curr.ptsUs <= prev.ptsUs || targetPtsUs >= curr.ptsUs) {
+            return curr
+        }
+        if (targetPtsUs <= prev.ptsUs) {
+            return prev
+        }
+        val alpha = ((targetPtsUs - prev.ptsUs).toFloat() / (curr.ptsUs - prev.ptsUs).toFloat()).coerceIn(0f, 1f)
+        if (alpha >= 0.93f) return curr
+        if (alpha <= 0.07f) return prev
+
+        // Scene-cut detection: if hard cut detected (MAD > 38), snap cleanly to nearest frame instead of ghosting
+        if (sceneCutDetection) {
+            val mad = computeSceneCutScore(prev, curr)
+            if (mad > 38) {
+                return if (alpha < 0.5f) prev else curr
+            }
+        }
+
+        val w = curr.width
+        val h = curr.height
+        val yOut = ByteArray(curr.y.size)
+        val blockSize = if (w * h > 1920 * 1080) 24 else 16
+        val searchRadius = if (highQualitySearch) 6 else 4
+        val searchStep = 2
+        val w1 = ((1f - alpha) * 256f).toInt()
+        val w2 = 256 - w1
+
+        var by = 0
+        while (by < h) {
+            val blockH = min(blockSize, h - by)
+            var bx = 0
+            while (bx < w) {
+                val blockW = min(blockSize, w - bx)
+
+                // Estimate block motion vector (bestDx, bestDy) from prev -> curr using sampled SAD
+                var bestDx = 0
+                var bestDy = 0
+                var bestSad = Int.MAX_VALUE
+
+                if (bx >= searchRadius && by >= searchRadius && bx + blockW + searchRadius < w && by + blockH + searchRadius < h) {
+                    var dy = -searchRadius
+                    while (dy <= searchRadius) {
+                        var dx = -searchRadius
+                        while (dx <= searchRadius) {
+                            var sad = 0
+                            var sy = 0
+                            while (sy < blockH) {
+                                val rPrev = (by + sy) * w + (bx + dx)
+                                val rCurr = (by + sy + dy) * w + (bx + dx)
+                                var sx = 0
+                                while (sx < blockW) {
+                                    val pVal = prev.y[rPrev + sx].toInt() and 0xFF
+                                    val cVal = curr.y[rCurr + sx].toInt() and 0xFF
+                                    sad += abs(pVal - cVal)
+                                    sx += 4
+                                }
+                                sy += 4
+                            }
+                            // Favor zero-motion vector slightly to avoid noise jitter in flat areas
+                            if (dx == 0 && dy == 0) sad = (sad * 9) / 10
+                            if (sad < bestSad) {
+                                bestSad = sad
+                                bestDx = dx
+                                bestDy = dy
+                            }
+                            dx += searchStep
+                        }
+                        dy += searchStep
+                    }
+                }
+
+                val shiftPrevX = (bestDx * alpha).roundToInt()
+                val shiftPrevY = (bestDy * alpha).roundToInt()
+                val shiftCurrX = -(bestDx * (1f - alpha)).roundToInt()
+                val shiftCurrY = -(bestDy * (1f - alpha)).roundToInt()
+
+                for (py in by until (by + blockH)) {
+                    val outRow = py * w
+                    val prevY = (py - shiftPrevY).coerceIn(0, h - 1) * w
+                    val currY = (py - shiftCurrY).coerceIn(0, h - 1) * w
+                    for (px in bx until (bx + blockW)) {
+                        val prevX = (px - shiftPrevX).coerceIn(0, w - 1)
+                        val currX = (px - shiftCurrX).coerceIn(0, w - 1)
+                        val pSample = prev.y[prevY + prevX].toInt() and 0xFF
+                        val cSample = curr.y[currY + currX].toInt() and 0xFF
+                        var warped = (pSample * w1 + cSample * w2) shr 8
+
+                        if (ghostingReduction && abs(pSample - cSample) > 48) {
+                            // Suppress occlusion halo/ghosting when forward/backward samples diverge strongly
+                            val directP = prev.y[outRow + px].toInt() and 0xFF
+                            val directC = curr.y[outRow + px].toInt() and 0xFF
+                            val lo = min(directP, directC) - 8
+                            val hi = max(directP, directC) + 8
+                            warped = warped.coerceIn(lo.coerceAtLeast(16), hi.coerceAtMost(235))
+                        }
+                        yOut[outRow + px] = warped.toByte()
+                    }
+                }
+
+                bx += blockSize
+            }
+            by += blockSize
+        }
+
+        val uOut = ByteArray(curr.u.size)
+        val vOut = ByteArray(curr.v.size)
+        for (i in uOut.indices) {
+            val pu = prev.u[i].toInt() and 0xFF
+            val cu = curr.u[i].toInt() and 0xFF
+            uOut[i] = ((pu * w1 + cu * w2) shr 8).toByte()
+
+            val pv = prev.v[i].toInt() and 0xFF
+            val cv = curr.v[i].toInt() and 0xFF
+            vOut[i] = ((pv * w1 + cv * w2) shr 8).toByte()
+        }
+
+        return YuvFrameBuffer(w, h, yOut, uOut, vOut, targetPtsUs)
+    }
+
     private fun interpolateYuvFrames(
         prev: YuvFrameBuffer,
         curr: YuvFrameBuffer,
-        targetPtsUs: Long
+        targetPtsUs: Long,
+        sceneCutDetection: Boolean = true
     ): YuvFrameBuffer {
         if (prev === curr || curr.ptsUs <= prev.ptsUs || targetPtsUs >= curr.ptsUs) {
             return curr
@@ -1526,6 +1907,10 @@ object VideoProcessingEngine {
         val alpha = ((targetPtsUs - prev.ptsUs).toFloat() / (curr.ptsUs - prev.ptsUs).toFloat()).coerceIn(0f, 1f)
         if (alpha >= 0.92f) return curr
         if (alpha <= 0.08f) return prev
+
+        if (sceneCutDetection && computeSceneCutScore(prev, curr) > 38) {
+            return if (alpha < 0.5f) prev else curr
+        }
 
         val w1 = ((1f - alpha) * 256f).toInt()
         val w2 = 256 - w1
@@ -1557,6 +1942,7 @@ object VideoProcessingEngine {
      * 1. Applying any residual [rotationDegrees] (0°, 90°, 180°, 270°) into upright display space.
      * 2. Preserving exact aspect ratio via uniform scaling (center-fit with neutral BT.709 black bars
      *    or center-crop when [scaleToFillCrop] is true) — never stretching X and Y independently!
+     * 3. Applying luma sharpening, denoise, debanding dithering, film grain, and skin-tone chroma protection.
      */
     private fun extractScaledYuvFrameFromImage(
         image: Image,
@@ -1567,6 +1953,10 @@ object VideoProcessingEngine {
         ptsUs: Long,
         sharpness: Int,
         denoise: Int,
+        debanding: Int = 0,
+        filmGrain: Int = 0,
+        skinToneProtection: Boolean = true,
+        saturationShift: Int = 0,
         pixelFilterStep: Int
     ): YuvFrameBuffer {
         val rawSrcW = image.width
@@ -1715,17 +2105,24 @@ object VideoProcessingEngine {
             }
         }
 
-        val processedY = if ((sharpness > 0 || denoise > 0) && pixelFilterStep <= 2) {
+        val processedY = if ((sharpness > 0 || denoise > 0 || debanding > 0 || filmGrain > 0) && pixelFilterStep <= 2) {
             applyLumaSharpenAndDenoise(
                 yPlane = yBytes,
                 width = targetWidth,
                 height = targetHeight,
                 sharpness = sharpness,
                 denoise = denoise,
+                debanding = debanding,
+                filmGrain = filmGrain,
+                ptsSeed = (ptsUs / 1000L).toInt(),
                 stepOverride = pixelFilterStep
             )
         } else {
             yBytes
+        }
+
+        if (skinToneProtection && abs(saturationShift) > 12) {
+            applySkinToneChromaProtection(uBytes, vBytes, saturationShift)
         }
 
         return YuvFrameBuffer(
@@ -1738,22 +2135,57 @@ object VideoProcessingEngine {
         )
     }
 
+    /**
+     * Protects human skin tones in YCbCr chroma space (Cb in 77..127, Cr in 133..173)
+     * from excessive saturation distortion when strong color grading or vibrant presets are active.
+     */
+    private fun applySkinToneChromaProtection(
+        uPlane: ByteArray,
+        vPlane: ByteArray,
+        saturationShift: Int
+    ) {
+        val damping = if (saturationShift > 0) 216 else 232 // 216/256 (~0.84x) pull toward natural skin chroma
+        for (i in uPlane.indices) {
+            val cb = uPlane[i].toInt() and 0xFF
+            val cr = vPlane[i].toInt() and 0xFF
+            if (cb in 77..127 && cr in 133..173) {
+                val newCb = 128 + (((cb - 128) * damping) shr 8)
+                val newCr = 128 + (((cr - 128) * damping) shr 8)
+                uPlane[i] = newCb.coerceIn(16, 240).toByte()
+                vPlane[i] = newCr.coerceIn(16, 240).toByte()
+            }
+        }
+    }
+
+    private val BAYER_4X4 = intArrayOf(
+        -7,  1, -5,  3,
+         5, -3,  7, -1,
+        -4,  4, -6,  2,
+         8,  0,  6, -2
+    )
+
     private fun applyLumaSharpenAndDenoise(
         yPlane: ByteArray,
         width: Int,
         height: Int,
         sharpness: Int,
         denoise: Int,
+        debanding: Int = 0,
+        filmGrain: Int = 0,
+        ptsSeed: Int = 0,
         stepOverride: Int = 1
     ): ByteArray {
         val out = yPlane.copyOf()
         val sharpenStrength = (sharpness.coerceIn(0, 100) * 3) // 0..300 fixed point (/256)
         val denoiseThreshold = (denoise.coerceIn(0, 100) / 5)   // 0..20 luma threshold
+        val debandAmp = (debanding.coerceIn(0, 100) / 25)       // 0..4 ordered dither amplitude
+        val grainAmp = (filmGrain.coerceIn(0, 100) / 8)         // 0..12 organic film grain amplitude
         val step = if (width * height > 2560 * 1440) max(2, stepOverride) else stepOverride.coerceIn(1, 4)
 
         var y = 1
         while (y < height - 1) {
             val rowOffset = y * width
+            val bayerRow = (y and 3) shl 2
             var x = 1
             while (x < width - 1) {
                 val idx = rowOffset + x
@@ -1766,14 +2198,26 @@ object VideoProcessingEngine {
                 val neighborAvg = (top + bottom + left + right) shr 2
                 val diff = center - neighborAvg
 
-                val adjusted = if (denoiseThreshold > 0 && abs(diff) <= denoiseThreshold) {
+                var adjusted = if (denoiseThreshold > 0 && abs(diff) <= denoiseThreshold) {
                     (center + neighborAvg) shr 1
                 } else if (sharpenStrength > 0) {
-                    (center + ((diff * sharpenStrength) shr 8)).coerceIn(16, 235)
+                    center + ((diff * sharpenStrength) shr 8)
                 } else {
                     center
                 }
-                out[idx] = adjusted.toByte()
+
+                if (debandAmp > 0 && abs(diff) <= 4) {
+                    val dither = (BAYER_4X4[bayerRow + (x and 3)] * debandAmp) shr 2
+                    adjusted += dither
+                }
+
+                if (grainAmp > 0) {
+                    val hash = ((idx xor ptsSeed) * 1103515245 + 12345) shr 16
+                    val grain = ((hash and 15) - 8) * grainAmp / 8
+                    adjusted += grain
+                }
+
+                out[idx] = adjusted.coerceIn(16, 235).toByte()
                 x += step
             }
             y += step
@@ -2159,13 +2603,31 @@ object VideoProcessingEngine {
                     .build()
 
                 val progressHolder = ProgressHolder()
+                var lastProgressPct = 0
+                var lastAdvanceMs = System.currentTimeMillis()
                 val pollRunnable = object : Runnable {
                     override fun run() {
                         if (completed || !cont.isActive) return
+                        val now = System.currentTimeMillis()
                         val state = transformer.getProgress(progressHolder)
                         if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
                             val pct = progressHolder.progress.coerceIn(8, 95)
+                            if (pct > lastProgressPct) {
+                                lastProgressPct = pct
+                                lastAdvanceMs = now
+                            }
                             onProgress(pct)
+                        } else {
+                            // Emit synthetic heartbeat progress between 8% and 28% while decoder/GL warms up
+                            val warmupPct = (8 + ((now - lastAdvanceMs) / 250L).toInt()).coerceIn(8, 28)
+                            onProgress(warmupPct)
+                        }
+                        // Stall watchdog: if Transformer makes zero progress for >7.5 seconds, fall through to CFR MediaCodec pass
+                        if (now - lastAdvanceMs > 7_500L) {
+                            completed = true
+                            runCatching { transformer.cancel() }
+                            if (cont.isActive) cont.resume(false)
+                            return
                         }
                         mainHandler.postDelayed(this, 120L)
                     }

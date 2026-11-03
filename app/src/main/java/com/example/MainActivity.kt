@@ -401,10 +401,15 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
                                 activeJobs = jobs,
                                 isProcessing = editorState.isProcessing,
                                 isPaused = editorState.isPaused,
+                                jobStage = editorState.jobStage,
                                 processingProgress = editorState.processingProgress,
                                 processingStatus = editorState.processingStatus,
                                 elapsedTimeMs = editorState.elapsedTimeMs,
                                 estimatedRemainingMs = editorState.estimatedRemainingMs,
+                                processingSpeedLabel = editorState.processingSpeedLabel,
+                                performanceMode = editorState.exportConfig.performanceMode,
+                                freeStorageBytes = editorState.deviceCapabilities.freeStorageBytes,
+                                onSelectPerformanceMode = { mode -> viewModel.setPerformanceMode(mode) },
                                 onPauseProcessing = { viewModel.pauseActiveProcessing() },
                                 onResumeProcessing = { viewModel.resumeActiveProcessing() },
                                 onCancelProcessing = { viewModel.cancelActiveProcessing() },
@@ -450,11 +455,18 @@ private fun EliteMatrixAuthenticatedOrGuestContent(
                                 thumbnailBitmap = editorState.videoThumbnail,
                                 adjustments = editorState.adjustments,
                                 exportConfig = editorState.exportConfig,
+                                favoriteFilterIds = editorState.favoriteFilterIds,
                                 onUpdateAdjustments = { transform ->
                                     viewModel.updateAdjustments(transform)
                                 },
                                 onApplyCinematicProfile = { profile ->
                                     viewModel.applyCinematicProfile(profile)
+                                },
+                                onApplyCreativeFilter = { filter ->
+                                    viewModel.applyCreativeFilter(filter)
+                                },
+                                onToggleFavoriteFilter = { filterId ->
+                                    viewModel.toggleFavoriteFilter(filterId)
                                 },
                                 onResetAdjustments = {
                                     viewModel.resetAdjustments()

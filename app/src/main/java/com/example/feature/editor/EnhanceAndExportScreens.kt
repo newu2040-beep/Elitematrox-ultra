@@ -112,10 +112,15 @@ import com.example.core.media.ProcessedVideoOutput
 import com.example.core.media.VideoProcessingEngine
 import com.example.domain.model.AspectRatioMode
 import com.example.domain.model.CinematicColorProfile
+import com.example.domain.model.CreativeFilterCategory
+import com.example.domain.model.CreativeFilterPreset
 import com.example.domain.model.DeviceHardwareCapabilities
 import com.example.domain.model.EnhancementAdjustments
 import com.example.domain.model.ExportConfiguration
+import com.example.domain.model.LutPreset
+import com.example.domain.model.MotionInterpolationMode
 import com.example.domain.model.ProcessingPerformanceMode
+import com.example.domain.model.RgbCurvePreset
 import com.example.domain.model.SocialMediaPreset
 import com.example.domain.model.VideoMetadata
 import com.example.ui.theme.EmeraldPillButton
@@ -146,8 +151,11 @@ fun EnhanceVideoScreen(
     thumbnailBitmap: Bitmap?,
     adjustments: EnhancementAdjustments,
     exportConfig: ExportConfiguration,
+    favoriteFilterIds: Set<String> = emptySet(),
     onUpdateAdjustments: ((EnhancementAdjustments) -> EnhancementAdjustments) -> Unit,
     onApplyCinematicProfile: (CinematicColorProfile) -> Unit = {},
+    onApplyCreativeFilter: (CreativeFilterPreset) -> Unit = {},
+    onToggleFavoriteFilter: (String) -> Unit = {},
     onResetAdjustments: () -> Unit,
     onSavePreset: (String) -> Unit,
     onImportNewVideo: () -> Unit,
@@ -165,6 +173,7 @@ fun EnhanceVideoScreen(
     var compareOriginal by rememberSaveable { mutableStateOf(false) }
     var showSavePresetDialog by rememberSaveable { mutableStateOf(false) }
     var isPreviewPlaying by rememberSaveable { mutableStateOf(false) }
+    var selectedFilterCategory by rememberSaveable { mutableStateOf(CreativeFilterCategory.All) }
 
     val (targetW, targetH) = exportConfig.targetDimensionsPx(
         sourceWidth = selectedVideo?.displayWidth ?: 1920,
@@ -398,6 +407,312 @@ fun EnhanceVideoScreen(
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                             fontSize = 11.5.sp
                         )
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Creative Film & Aesthetic Filters Library (14 Categories + Favorites + Intensity 0-100%)
+        NeumorphicCard(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = 18.dp,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.Palette,
+                            contentDescription = null,
+                            tint = neu.accentPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Creative Film & Aesthetic Filters",
+                            color = neu.textPrimary,
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        )
+                    }
+                    Text(
+                        text = if (adjustments.creativeFilter == CreativeFilterPreset.None) {
+                            "Original"
+                        } else {
+                            "${adjustments.creativeFilter.title} (${adjustments.filterIntensity}%)"
+                        },
+                        color = neu.accentPrimary,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 11.sp
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(7.dp))
+
+                // 14 Filter Categories Scroll Row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CreativeFilterCategory.entries.forEach { cat ->
+                        val activeCat = selectedFilterCategory == cat
+                        Box(
+                            modifier = Modifier
+                                .height(27.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    if (activeCat) neu.accentPrimary else neu.surfaceInset
+                                )
+                                .clickable { selectedFilterCategory = cat }
+                                .padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (cat == CreativeFilterCategory.Favorites) "★ ${cat.title}" else cat.title,
+                                color = if (activeCat) Color.White else neu.textSecondary,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = if (activeCat) FontWeight.Bold else FontWeight.Medium,
+                                    fontSize = 10.5.sp
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val filteredPresets = remember(selectedFilterCategory, favoriteFilterIds) {
+                    CreativeFilterPreset.entries.filter { preset ->
+                        when (selectedFilterCategory) {
+                            CreativeFilterCategory.All -> true
+                            CreativeFilterCategory.Favorites -> preset == CreativeFilterPreset.None || preset.id in favoriteFilterIds
+                            else -> preset == CreativeFilterPreset.None || preset.category == selectedFilterCategory
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    filteredPresets.forEach { filterPreset ->
+                        val isSelected = adjustments.creativeFilter == filterPreset
+                        val isFav = filterPreset.id in favoriteFilterIds
+                        Box(
+                            modifier = Modifier
+                                .height(46.dp)
+                                .then(
+                                    if (isSelected) {
+                                        Modifier
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(
+                                                Brush.horizontalGradient(
+                                                    listOf(neu.accentPrimary, neu.accentSecondary)
+                                                )
+                                            )
+                                    } else {
+                                        Modifier.neumorphicRaised(cornerRadius = 14.dp, elevation = 2.dp)
+                                    }
+                                )
+                                .clickable { onApplyCreativeFilter(filterPreset) }
+                                .padding(horizontal = 11.dp, vertical = 5.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Column {
+                                    Text(
+                                        text = filterPreset.title,
+                                        color = if (isSelected) Color.White else neu.textPrimary,
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp
+                                        )
+                                    )
+                                    Text(
+                                        text = filterPreset.subtitle,
+                                        color = if (isSelected) Color.White.copy(alpha = 0.85f) else neu.textSecondary,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp)
+                                    )
+                                }
+                                if (filterPreset != CreativeFilterPreset.None) {
+                                    Text(
+                                        text = if (isFav) "★" else "☆",
+                                        color = if (isSelected) Color.White else neu.accentPrimary,
+                                        style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp),
+                                        modifier = Modifier
+                                            .clickable { onToggleFavoriteFilter(filterPreset.id) }
+                                            .padding(2.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (adjustments.creativeFilter != CreativeFilterPreset.None) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Filter Intensity (${adjustments.creativeFilter.title})",
+                            color = neu.textPrimary,
+                            style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp)
+                        )
+                        Text(
+                            text = "${adjustments.filterIntensity}%",
+                            color = neu.accentPrimary,
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                    }
+                    Slider(
+                        value = adjustments.filterIntensity.toFloat(),
+                        onValueChange = { v -> onUpdateAdjustments { it.copy(filterIntensity = v.toInt()) } },
+                        valueRange = 0f..100f,
+                        colors = SliderDefaults.colors(activeTrackColor = neu.accentPrimary)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Optical Flow & Motion Interpolation Studio Card
+        NeumorphicCard(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = 18.dp,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.Speed,
+                            contentDescription = null,
+                            tint = neu.accentPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Optical Flow & Motion Engine",
+                            color = neu.textPrimary,
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        )
+                    }
+                    Text(
+                        text = "${adjustments.motionInterpolationMode.title} • ${if (adjustments.sceneCutDetection) "Scene-Cut Guard" else "Direct"}",
+                        color = neu.accentPrimary,
+                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.5.sp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(7.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    MotionInterpolationMode.entries.forEach { mode ->
+                        val active = adjustments.motionInterpolationMode == mode
+                        Box(
+                            modifier = Modifier
+                                .height(30.dp)
+                                .then(
+                                    if (active) {
+                                        Modifier
+                                            .clip(RoundedCornerShape(15.dp))
+                                            .background(
+                                                Brush.horizontalGradient(
+                                                    listOf(neu.accentPrimary, neu.accentSecondary)
+                                                )
+                                            )
+                                    } else {
+                                        Modifier.neumorphicRaised(cornerRadius = 15.dp, elevation = 2.dp)
+                                    }
+                                )
+                                .clickable { onUpdateAdjustments { it.copy(motionInterpolationMode = mode) } }
+                                .padding(horizontal = 11.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = mode.title,
+                                color = if (active) Color.White else neu.textPrimary,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                    fontSize = 10.5.sp
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(7.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    NeumorphicChoicePill(
+                        label = "Scene-Cut",
+                        selected = adjustments.sceneCutDetection,
+                        onClick = { onUpdateAdjustments { it.copy(sceneCutDetection = !it.sceneCutDetection) } }
+                    )
+                    NeumorphicChoicePill(
+                        label = "Anti-Ghost",
+                        selected = adjustments.ghostingReduction,
+                        onClick = { onUpdateAdjustments { it.copy(ghostingReduction = !it.ghostingReduction) } }
+                    )
+                    NeumorphicChoicePill(
+                        label = "Stabilize",
+                        selected = adjustments.videoStabilization,
+                        onClick = { onUpdateAdjustments { it.copy(videoStabilization = !it.videoStabilization) } }
+                    )
+                    NeumorphicChoicePill(
+                        label = when {
+                            adjustments.slowMotionFactor <= 0.30f -> "0.25x Slow"
+                            adjustments.slowMotionFactor <= 0.60f -> "0.5x Slow"
+                            else -> "1.0x Speed"
+                        },
+                        selected = adjustments.slowMotionFactor < 0.99f,
+                        onClick = {
+                            val next = when {
+                                adjustments.slowMotionFactor >= 0.95f -> 0.5f
+                                adjustments.slowMotionFactor >= 0.45f -> 0.25f
+                                else -> 1.0f
+                            }
+                            onUpdateAdjustments { it.copy(slowMotionFactor = next) }
+                        }
                     )
                 }
             }
@@ -724,6 +1039,164 @@ fun EnhanceVideoScreen(
                             colors = SliderDefaults.colors(activeTrackColor = neu.accentPrimary)
                         )
 
+                        // Super-Resolution & Detail Recovery
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Super-Resolution & Detail Recovery", style = MaterialTheme.typography.bodyMedium, color = neu.textPrimary)
+                            Text("${adjustments.superResolution}%", style = MaterialTheme.typography.labelLarge, color = neu.accentPrimary)
+                        }
+                        Slider(
+                            value = adjustments.superResolution.toFloat(),
+                            onValueChange = { v ->
+                                onUpdateAdjustments {
+                                    it.copy(
+                                        superResolution = v.toInt(),
+                                        detailRecovery = (v * 0.8f).toInt(),
+                                        edgeEnhancement = (v * 0.6f).toInt()
+                                    )
+                                }
+                            },
+                            valueRange = 0f..100f,
+                            colors = SliderDefaults.colors(activeTrackColor = neu.accentPrimary)
+                        )
+
+                        // Debanding (Ordered Gradient Dither)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Debanding (Sky/Gradient Smoothing)", style = MaterialTheme.typography.bodyMedium, color = neu.textPrimary)
+                            Text("${adjustments.debanding}%", style = MaterialTheme.typography.labelLarge, color = neu.accentPrimary)
+                        }
+                        Slider(
+                            value = adjustments.debanding.toFloat(),
+                            onValueChange = { v -> onUpdateAdjustments { it.copy(debanding = v.toInt()) } },
+                            valueRange = 0f..100f,
+                            colors = SliderDefaults.colors(activeTrackColor = neu.accentPrimary)
+                        )
+
+                        // Organic Film Grain Synthesis
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Analog Film Grain Synthesis", style = MaterialTheme.typography.bodyMedium, color = neu.textPrimary)
+                            Text("${adjustments.filmGrain}%", style = MaterialTheme.typography.labelLarge, color = neu.accentPrimary)
+                        }
+                        Slider(
+                            value = adjustments.filmGrain.toFloat(),
+                            onValueChange = { v -> onUpdateAdjustments { it.copy(filmGrain = v.toInt()) } },
+                            valueRange = 0f..100f,
+                            colors = SliderDefaults.colors(activeTrackColor = neu.accentPrimary)
+                        )
+
+                        // Decompression Artifact Reduction
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Compression Block/Mosquito Reduction", style = MaterialTheme.typography.bodyMedium, color = neu.textPrimary)
+                            Text("${adjustments.artifactReduction}%", style = MaterialTheme.typography.labelLarge, color = neu.accentPrimary)
+                        }
+                        Slider(
+                            value = adjustments.artifactReduction.toFloat(),
+                            onValueChange = { v -> onUpdateAdjustments { it.copy(artifactReduction = v.toInt()) } },
+                            valueRange = 0f..100f,
+                            colors = SliderDefaults.colors(activeTrackColor = neu.accentPrimary)
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        HorizontalDivider(color = neu.divider)
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // 3D LUTs & RGB Curves & Skin-Tone Protection
+                        Text(
+                            text = "3D LUTs, RGB Curves & Skin-Tone Protection",
+                            color = neu.accentPrimary,
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            LutPreset.entries.forEach { lut ->
+                                NeumorphicChoicePill(
+                                    label = lut.label,
+                                    selected = adjustments.lutPreset == lut,
+                                    onClick = { onUpdateAdjustments { it.copy(lutPreset = lut) } }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            RgbCurvePreset.entries.forEach { curve ->
+                                NeumorphicChoicePill(
+                                    label = curve.label,
+                                    selected = adjustments.rgbCurvePreset == curve,
+                                    onClick = { onUpdateAdjustments { it.copy(rgbCurvePreset = curve) } }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // HSL Hue & Color Balance Sliders
+                        NeumorphicAdjustmentSliderRow(
+                            icon = Icons.Outlined.Palette,
+                            iconTint = neu.accentPrimary,
+                            label = "HSL Hue",
+                            value = adjustments.hslHueShift,
+                            onValueChange = { v -> onUpdateAdjustments { it.copy(hslHueShift = v) } },
+                            testTag = "slider_hsl_hue"
+                        )
+
+                        NeumorphicAdjustmentSliderRow(
+                            icon = Icons.Outlined.Thermostat,
+                            iconTint = neu.thermoOrange,
+                            label = "Red / Cyan",
+                            value = adjustments.colorBalanceRedCyan,
+                            onValueChange = { v -> onUpdateAdjustments { it.copy(colorBalanceRedCyan = v) } },
+                            testTag = "slider_balance_rc"
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Skin-Tone Chroma Protection",
+                                    color = neu.textPrimary,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                )
+                                Text(
+                                    text = "Preserves natural YCbCr portrait skin tones during heavy grading",
+                                    color = neu.textSecondary,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.5.sp)
+                                )
+                            }
+                            Switch(
+                                checked = adjustments.skinToneProtection,
+                                onCheckedChange = { checked ->
+                                    onUpdateAdjustments { it.copy(skinToneProtection = checked) }
+                                }
+                            )
+                        }
+
                         Spacer(modifier = Modifier.height(8.dp))
 
                         // Live FFmpeg Filter Graph Preview
@@ -958,7 +1431,7 @@ fun ExportSettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 2. Resolution ("720p", "1080p", "2K", "4K")
+        // 2. Resolution ("720p", "1080p", "2K", "4K", "8K")
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -981,9 +1454,9 @@ fun ExportSettingsScreen(
         Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("720p", "1080p", "2K", "4K").forEach { res ->
+            listOf("720p", "1080p", "2K", "4K", "8K").forEach { res ->
                 NeumorphicChoicePill(
                     label = res,
                     selected = exportConfig.resolution == res,
@@ -995,7 +1468,7 @@ fun ExportSettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 3. Frame Rate ("24", "30", "60" + High-Refresh "50", "90", "120" FPS)
+        // 3. Frame Rate ("24", "25", "30", "50", "60", "90", "120" FPS)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1018,9 +1491,9 @@ fun ExportSettingsScreen(
         Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf(24, 30, 60).forEach { fpsVal ->
+            listOf(24, 25, 30, 60).forEach { fpsVal ->
                 NeumorphicChoicePill(
                     label = fpsVal.toString(),
                     selected = exportConfig.fps == fpsVal,
@@ -1046,7 +1519,7 @@ fun ExportSettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 4. Video Codec ("H.264", "H.265", "AV1")
+        // 4. Video Codec ("H.264", "H.265", "AV1", "ProRes")
         Text(
             text = "Video Codec",
             color = neu.textPrimary,
@@ -1058,9 +1531,9 @@ fun ExportSettingsScreen(
         Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("H.264", "H.265", "AV1").forEach { codecName ->
+            listOf("H.264", "H.265", "AV1", "ProRes").forEach { codecName ->
                 NeumorphicChoicePill(
                     label = codecName,
                     selected = exportConfig.codec == codecName,
@@ -1204,7 +1677,7 @@ fun ExportSettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 6. Format ("MP4", "MOV", "MKV")
+        // 6. Format ("MP4", "MOV", "MKV", "WebM")
         Text(
             text = "Format",
             color = neu.textPrimary,
@@ -1216,9 +1689,9 @@ fun ExportSettingsScreen(
         Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("MP4", "MOV", "MKV").forEach { fmt ->
+            listOf("MP4", "MOV", "MKV", "WebM").forEach { fmt ->
                 NeumorphicChoicePill(
                     label = fmt,
                     selected = exportConfig.containerFormat == fmt,
@@ -1429,6 +1902,29 @@ fun ExportSettingsScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
                     HorizontalDivider(color = neu.divider)
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Rate Control Mode (VBR / CBR / CRF) & Encoder Hardware/Software Selection
+                    Text("Rate Control & Encoder Engine", style = MaterialTheme.typography.labelLarge, color = neu.textPrimary)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("VBR", "CBR", "CRF").forEach { rc ->
+                            NeumorphicChoicePill(
+                                label = rc,
+                                selected = exportConfig.rateControl == rc,
+                                onClick = { onUpdateExportConfig { it.copy(rateControl = rc) } }
+                            )
+                        }
+                        NeumorphicChoicePill(
+                            label = if (exportConfig.useHardwareEncoder) "HW Codec" else "SW FFmpeg",
+                            selected = exportConfig.useHardwareEncoder,
+                            onClick = { onUpdateExportConfig { it.copy(useHardwareEncoder = !it.useHardwareEncoder) } }
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(8.dp))
 
                     // Social Anti-Recompression Lock Switch

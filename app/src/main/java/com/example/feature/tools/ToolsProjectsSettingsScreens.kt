@@ -528,7 +528,7 @@ fun ToolsHubScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            listOf("H.264", "H.265", "AV1").forEach { codecName ->
+                            listOf("H.264", "H.265", "AV1", "ProRes").forEach { codecName ->
                                 NeumorphicChoicePill(
                                     label = codecName,
                                     selected = exportConfig.codec == codecName,
@@ -670,7 +670,7 @@ fun ToolsHubScreen(
                         Text("Target Container Format", style = MaterialTheme.typography.titleMedium, color = neu.textPrimary)
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                            listOf("MP4", "MOV", "MKV").forEach { fmt ->
+                            listOf("MP4", "MOV", "MKV", "WebM").forEach { fmt ->
                                 NeumorphicChoicePill(
                                     label = fmt,
                                     selected = exportConfig.containerFormat == fmt,
@@ -682,7 +682,7 @@ fun ToolsHubScreen(
                         Text("Target Video Stream Codec", style = MaterialTheme.typography.titleMedium, color = neu.textPrimary)
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                            listOf("H.264", "H.265", "AV1").forEach { c ->
+                            listOf("H.264", "H.265", "AV1", "ProRes").forEach { c ->
                                 NeumorphicChoicePill(
                                     label = c,
                                     selected = exportConfig.codec == c,

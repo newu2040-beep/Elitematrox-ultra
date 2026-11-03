@@ -43,8 +43,38 @@ enum class ExecutionRoute(val label: String) {
 }
 
 /**
+ * Reliable job-state lifecycle stages for local, hybrid, and cloud processing jobs.
+ */
+enum class JobStage(val label: String, val badgeText: String) {
+    Queued("Queued in pipeline", "QUEUED"),
+    Uploading("Uploading source media", "UPLOADING"),
+    Processing("Processing & optical flow", "PROCESSING"),
+    Encoding("Hardware/CFR encoding", "ENCODING"),
+    Finalizing("Muxing & verifying streams", "FINALIZING"),
+    Completed("Completed & verified", "COMPLETED"),
+    Failed("Processing failed", "FAILED"),
+    Cancelled("Job cancelled", "CANCELLED");
+
+    companion object {
+        fun fromStatusString(status: String): JobStage {
+            val s = status.lowercase()
+            return when {
+                s.contains("queue") -> Queued
+                s.contains("upload") -> Uploading
+                s.contains("encod") || s.contains("transcod") -> Encoding
+                s.contains("final") || s.contains("mux") || s.contains("verif") || s.contains("download") -> Finalizing
+                s.contains("complet") -> Completed
+                s.contains("fail") || s.contains("error") -> Failed
+                s.contains("cancel") -> Cancelled
+                else -> Processing
+            }
+        }
+    }
+}
+
+/**
  * Three real, functional processing performance modes with distinct encoding pipelines,
- * memory footprints, filter passes, and hardware/bitrate strategies.
+ * memory footprints, filter passes, Optical Flow strategies, and hardware/bitrate multipliers.
  */
 enum class ProcessingPerformanceMode(
     val badge: String,
@@ -53,38 +83,83 @@ enum class ProcessingPerformanceMode(
     val ffmpegPreset: String,
     val bitrateMultiplier: Float,
     val enableMotionInterpolation: Boolean,
-    val pixelFilterStep: Int
+    val pixelFilterStep: Int,
+    val benefitsFromCloudNote: String
 ) {
     Lite(
         badge = "LITE",
         title = "Lite Mode",
-        subtitle = "Fastest speed & battery saver • Direct HW pass",
+        subtitle = "Fastest speed & low battery • Direct HW pass & efficient compression",
         ffmpegPreset = "veryfast",
         bitrateMultiplier = 0.85f,
         enableMotionInterpolation = false,
-        pixelFilterStep = 4
+        pixelFilterStep = 4,
+        benefitsFromCloudNote = "Runs 100% on-device with minimal RAM and thermal footprint."
     ),
     Elite(
         badge = "ELITE",
         title = "Elite Mode",
-        subtitle = "Balanced speed & studio quality • HW + CFR lock",
+        subtitle = "Balanced speed & studio quality • Detail recovery + Optical Flow CFR",
         ffmpegPreset = "medium",
         bitrateMultiplier = 1.00f,
         enableMotionInterpolation = true,
-        pixelFilterStep = 2
+        pixelFilterStep = 2,
+        benefitsFromCloudNote = "Uses hardware acceleration locally; 4K/8K AV1 jobs can offload to Cloud Run."
     ),
     Max(
         badge = "MAX",
         title = "Max Mode",
-        subtitle = "Maximum detail, 1×1 luma unsharp & 1.25× bitrate headroom",
+        subtitle = "Maximum detail, 1×1 Optical Flow MCI, Scene-Cut Guard & 1.25× bitrate",
         ffmpegPreset = "slow",
         bitrateMultiplier = 1.25f,
         enableMotionInterpolation = true,
-        pixelFilterStep = 1
+        pixelFilterStep = 1,
+        benefitsFromCloudNote = "Full 1×1 pixel restoration & motion-compensated interpolation; heavy 4K/8K benefits from Cloud Run."
     );
 
     val badgeLabel: String
         get() = badge
+}
+
+/**
+ * Frame interpolation & motion synthesis engine modes for 24/25/30/50/60/90/120 FPS output.
+ */
+enum class MotionInterpolationMode(
+    val label: String,
+    val shortLabel: String,
+    val description: String
+) {
+    CadenceLock(
+        label = "Nearest CFR Lock",
+        shortLabel = "CFR Lock",
+        description = "Deterministic VFR-to-CFR timestamp normalization without synthetic frames"
+    ),
+    MotionBlend(
+        label = "Temporal Frame Blending",
+        shortLabel = "Frame Blend",
+        description = "Sub-frame alpha-weighted luma/chroma temporal blending for smooth motion"
+    ),
+    OpticalFlowStandard(
+        label = "Optical Flow (Motion-Compensated)",
+        shortLabel = "Optical Flow",
+        description = "Block-matching motion vector estimation with ghosting & scene-cut protection"
+    ),
+    OpticalFlowHighQuality(
+        label = "AI Motion-Adaptive Flow (MAX)",
+        shortLabel = "AI Optical Flow",
+        description = "Bidirectional motion vector synthesis with occlusion & artifact suppression"
+    );
+
+    val title: String
+        get() = label
+
+    companion object {
+        val Off: MotionInterpolationMode get() = CadenceLock
+        val FrameBlending: MotionInterpolationMode get() = MotionBlend
+        val OpticalFlowMci: MotionInterpolationMode get() = OpticalFlowStandard
+        val AiMotionCompensated: MotionInterpolationMode get() = OpticalFlowHighQuality
+        val OpticalFlowPro: MotionInterpolationMode get() = OpticalFlowHighQuality
+    }
 }
 
 /**
@@ -133,6 +208,426 @@ enum class CinematicColorProfile(
 
     val label: String
         get() = displayName
+}
+
+/**
+ * 14 Professional Creative Filter Categories requested for the Creative Filters & Presets Library.
+ */
+enum class CreativeFilterCategory(val displayName: String) {
+    All("All Filters"),
+    Favorites("★ Favorites"),
+    KodakFilm("Kodak Film"),
+    Fujifilm("Fujifilm"),
+    VintageRetro("Vintage & Retro"),
+    Cinematic("Cinematic"),
+    Natural("Natural"),
+    WarmCool("Warm & Cool"),
+    Moody("Moody"),
+    SoftPastel("Soft Pastel"),
+    BlackAndWhite("Black & White"),
+    AnalogFilm("Analog Film"),
+    NightLowLight("Night & Low-Light"),
+    TravelLandscape("Travel & Landscape"),
+    PortraitSkinTones("Portrait & Skin"),
+    SocialMedia("Social Aesthetic");
+
+    val title: String
+        get() = displayName
+
+    val label: String
+        get() = displayName
+}
+
+/**
+ * Built-in professional creative filters across all 14 categories with real color matrix parameters.
+ */
+enum class CreativeFilterPreset(
+    val id: String,
+    val displayName: String,
+    val category: CreativeFilterCategory,
+    val subtitle: String,
+    val brightnessDelta: Int,
+    val contrastDelta: Int,
+    val saturationDelta: Int,
+    val temperatureDelta: Int,
+    val tintDelta: Int,
+    val vibranceDelta: Int,
+    val grainAmount: Int = 0,
+    val protectSkinTones: Boolean = true
+) {
+    None(
+        id = "filter_none",
+        displayName = "Original (No Filter)",
+        category = CreativeFilterCategory.Natural,
+        subtitle = "Unmodified source color pipeline",
+        brightnessDelta = 0,
+        contrastDelta = 0,
+        saturationDelta = 0,
+        temperatureDelta = 0,
+        tintDelta = 0,
+        vibranceDelta = 0,
+        grainAmount = 0
+    ),
+    // 1. Kodak-inspired film looks
+    KodakPortra400(
+        id = "kodak_portra_400",
+        displayName = "Kodak Portra 400",
+        category = CreativeFilterCategory.KodakFilm,
+        subtitle = "Warm natural skin tones, soft highlight roll-off & fine grain",
+        brightnessDelta = 6,
+        contrastDelta = 8,
+        saturationDelta = 6,
+        temperatureDelta = 14,
+        tintDelta = 3,
+        vibranceDelta = 14,
+        grainAmount = 12,
+        protectSkinTones = true
+    ),
+    KodakGold200(
+        id = "kodak_gold_200",
+        displayName = "Kodak Gold 200",
+        category = CreativeFilterCategory.KodakFilm,
+        subtitle = "Nostalgic golden amber warmth and rich daylight saturation",
+        brightnessDelta = 8,
+        contrastDelta = 12,
+        saturationDelta = 14,
+        temperatureDelta = 24,
+        tintDelta = 4,
+        vibranceDelta = 16,
+        grainAmount = 15
+    ),
+    KodakEktar100(
+        id = "kodak_ektar_100",
+        displayName = "Kodak Ektar 100",
+        category = CreativeFilterCategory.KodakFilm,
+        subtitle = "Ultra-vivid micro-contrast and punchy primary colors",
+        brightnessDelta = 2,
+        contrastDelta = 20,
+        saturationDelta = 24,
+        temperatureDelta = 8,
+        tintDelta = -2,
+        vibranceDelta = 26,
+        grainAmount = 5
+    ),
+    // 2. Fujifilm-inspired film simulations
+    FujiVelvia50(
+        id = "fuji_velvia_50",
+        displayName = "Fujifilm Velvia 50",
+        category = CreativeFilterCategory.Fujifilm,
+        subtitle = "Legendary landscape slide film with deep greens & vibrant skies",
+        brightnessDelta = 0,
+        contrastDelta = 22,
+        saturationDelta = 28,
+        temperatureDelta = -4,
+        tintDelta = -6,
+        vibranceDelta = 30,
+        grainAmount = 4
+    ),
+    FujiClassicChrome(
+        id = "fuji_classic_chrome",
+        displayName = "Fuji Classic Chrome",
+        category = CreativeFilterCategory.Fujifilm,
+        subtitle = "Documentary magazine look with muted chroma & crisp shadows",
+        brightnessDelta = -2,
+        contrastDelta = 18,
+        saturationDelta = -18,
+        temperatureDelta = -6,
+        tintDelta = -4,
+        vibranceDelta = -8,
+        grainAmount = 10
+    ),
+    FujiAstiaSoft(
+        id = "fuji_astia_soft",
+        displayName = "Fujifilm Astia Soft",
+        category = CreativeFilterCategory.Fujifilm,
+        subtitle = "Velvety portrait tones with gentle contrast & natural greens",
+        brightnessDelta = 7,
+        contrastDelta = 6,
+        saturationDelta = 8,
+        temperatureDelta = 6,
+        tintDelta = 2,
+        vibranceDelta = 14,
+        grainAmount = 6,
+        protectSkinTones = true
+    ),
+    // 3. Vintage & Retro
+    Super8Vintage70s(
+        id = "vintage_super8_70s",
+        displayName = "70s Super 8 Vintage",
+        category = CreativeFilterCategory.VintageRetro,
+        subtitle = "Faded blacks, warm sepia-amber cast & organic celluloid grain",
+        brightnessDelta = 5,
+        contrastDelta = -8,
+        saturationDelta = -16,
+        temperatureDelta = 28,
+        tintDelta = 8,
+        vibranceDelta = -10,
+        grainAmount = 28
+    ),
+    RetroVhs90s(
+        id = "retro_vhs_90s",
+        displayName = "90s Camcorder Retro",
+        category = CreativeFilterCategory.VintageRetro,
+        subtitle = "Classic magnetic tape chroma shift with lifted midtones",
+        brightnessDelta = 6,
+        contrastDelta = 10,
+        saturationDelta = 12,
+        temperatureDelta = -10,
+        tintDelta = 12,
+        vibranceDelta = 8,
+        grainAmount = 22
+    ),
+    // 4. Cinematic
+    AnamorphicBlockbuster(
+        id = "cine_anamorphic",
+        displayName = "Anamorphic Blockbuster",
+        category = CreativeFilterCategory.Cinematic,
+        subtitle = "Teal shadows, warm skin highlights & wide dynamic contrast",
+        brightnessDelta = 0,
+        contrastDelta = 20,
+        saturationDelta = 10,
+        temperatureDelta = -10,
+        tintDelta = -5,
+        vibranceDelta = 20,
+        grainAmount = 8,
+        protectSkinTones = true
+    ),
+    Kodak2383PrintEmulation(
+        id = "cine_2383_print",
+        displayName = "Cinema 2383 Print Stock",
+        category = CreativeFilterCategory.Cinematic,
+        subtitle = "Theatrical release print S-curve with rich shadow density",
+        brightnessDelta = -3,
+        contrastDelta = 24,
+        saturationDelta = 12,
+        temperatureDelta = 6,
+        tintDelta = 0,
+        vibranceDelta = 16,
+        grainAmount = 10
+    ),
+    // 5. Natural
+    TrueLifeNatural(
+        id = "natural_truelife",
+        displayName = "True-Life Studio Clean",
+        category = CreativeFilterCategory.Natural,
+        subtitle = "Balanced BT.709 clarity with subtle micro-contrast lift",
+        brightnessDelta = 4,
+        contrastDelta = 10,
+        saturationDelta = 6,
+        temperatureDelta = 0,
+        tintDelta = 0,
+        vibranceDelta = 10
+    ),
+    // 6. Warm & Cool
+    SunlitAmberWarm(
+        id = "warm_sunlit_amber",
+        displayName = "Sunlit Amber Glow",
+        category = CreativeFilterCategory.WarmCool,
+        subtitle = "Radiant golden-hour warmth with luminous highlights",
+        brightnessDelta = 8,
+        contrastDelta = 10,
+        saturationDelta = 14,
+        temperatureDelta = 26,
+        tintDelta = 4,
+        vibranceDelta = 16
+    ),
+    ArcticNordicCool(
+        id = "cool_arctic_nordic",
+        displayName = "Arctic Crystal Cool",
+        category = CreativeFilterCategory.WarmCool,
+        subtitle = "Crisp glacier blues and clean alabaster highlights",
+        brightnessDelta = 6,
+        contrastDelta = 14,
+        saturationDelta = 8,
+        temperatureDelta = -24,
+        tintDelta = -4,
+        vibranceDelta = 12
+    ),
+    // 7. Moody
+    MoodyNordicNoir(
+        id = "moody_nordic_noir",
+        displayName = "Moody Cinematic Slate",
+        category = CreativeFilterCategory.Moody,
+        subtitle = "Desaturated slate greens, deep shadows & atmospheric tone",
+        brightnessDelta = -8,
+        contrastDelta = 18,
+        saturationDelta = -26,
+        temperatureDelta = -12,
+        tintDelta = -4,
+        vibranceDelta = -12,
+        grainAmount = 10
+    ),
+    // 8. Soft Pastel
+    SoftPastelDream(
+        id = "pastel_soft_dream",
+        displayName = "Soft Pastel Peach & Mint",
+        category = CreativeFilterCategory.SoftPastel,
+        subtitle = "Airy creamy highlights, low contrast & delicate pastel hues",
+        brightnessDelta = 14,
+        contrastDelta = -12,
+        saturationDelta = -8,
+        temperatureDelta = 10,
+        tintDelta = 6,
+        vibranceDelta = 18
+    ),
+    // 9. Black & White
+    IlfordHp5Monochrome(
+        id = "bw_ilford_hp5",
+        displayName = "Ilford HP5 400 B&W",
+        category = CreativeFilterCategory.BlackAndWhite,
+        subtitle = "Classic photojournalism monochrome with silver grain structure",
+        brightnessDelta = 2,
+        contrastDelta = 26,
+        saturationDelta = -100,
+        temperatureDelta = 0,
+        tintDelta = 0,
+        vibranceDelta = -100,
+        grainAmount = 18
+    ),
+    // 10. Analog Film
+    CineStill800TAnalog(
+        id = "analog_cinestill_800t",
+        displayName = "CineStill 800T Tungsten",
+        category = CreativeFilterCategory.AnalogFilm,
+        subtitle = "Tungsten balanced analog stock with halation highlight warmth",
+        brightnessDelta = 4,
+        contrastDelta = 16,
+        saturationDelta = 14,
+        temperatureDelta = -16,
+        tintDelta = 8,
+        vibranceDelta = 20,
+        grainAmount = 16
+    ),
+    // 11. Night & Low-Light
+    NightVisionClarity(
+        id = "night_lowlight_clarity",
+        displayName = "Low-Light Shadow Lift",
+        category = CreativeFilterCategory.NightLowLight,
+        subtitle = "Recovers dark night shadow detail while suppressing chroma noise",
+        brightnessDelta = 18,
+        contrastDelta = 12,
+        saturationDelta = 6,
+        temperatureDelta = -6,
+        tintDelta = 2,
+        vibranceDelta = 14
+    ),
+    // 12. Travel & Landscape
+    AlpineVistaHDR(
+        id = "travel_alpine_hdr",
+        displayName = "Alpine Travel HDR",
+        category = CreativeFilterCategory.TravelLandscape,
+        subtitle = "Sky polarization effect with rich foliage and mountain clarity",
+        brightnessDelta = 5,
+        contrastDelta = 18,
+        saturationDelta = 18,
+        temperatureDelta = 4,
+        tintDelta = -2,
+        vibranceDelta = 24
+    ),
+    // 13. Portrait & Skin Tones
+    StudioPortraitSilk(
+        id = "portrait_studio_silk",
+        displayName = "Studio Portrait Skin-Safe",
+        category = CreativeFilterCategory.PortraitSkinTones,
+        subtitle = "Protects natural YCbCr skin hues while enhancing eyes & background",
+        brightnessDelta = 8,
+        contrastDelta = 8,
+        saturationDelta = 6,
+        temperatureDelta = 8,
+        tintDelta = 2,
+        vibranceDelta = 16,
+        protectSkinTones = true
+    ),
+    // 14. Social Media Aesthetics
+    ViralCleanCreator(
+        id = "social_viral_creator",
+        displayName = "Creator Reels Glow",
+        category = CreativeFilterCategory.SocialMedia,
+        subtitle = "Crisp luminous whites, warm skin & high-engagement color pop",
+        brightnessDelta = 10,
+        contrastDelta = 14,
+        saturationDelta = 12,
+        temperatureDelta = 10,
+        tintDelta = 2,
+        vibranceDelta = 20,
+        protectSkinTones = true
+    );
+
+    val title: String
+        get() = displayName
+
+    val label: String
+        get() = displayName
+
+    val exposureShift: Int
+        get() = brightnessDelta
+
+    val contrastShift: Int
+        get() = contrastDelta
+
+    val saturationShift: Int
+        get() = saturationDelta
+
+    val tempShift: Int
+        get() = temperatureDelta
+
+    val tintShift: Int
+        get() = tintDelta
+
+    val grainHint: Int
+        get() = grainAmount
+
+    val isMonochrome: Boolean
+        get() = saturationDelta <= -95 || category == CreativeFilterCategory.BlackAndWhite
+
+    val shadowLift: Int
+        get() = if (brightnessDelta > 0) brightnessDelta / 2 else 0
+
+    val highlightRollOff: Int
+        get() = if (contrastDelta < 0) -contrastDelta else 4
+
+    val rScaleDelta: Float
+        get() = temperatureDelta * 0.0025f
+
+    val gScaleDelta: Float
+        get() = -tintDelta * 0.0020f
+
+    val bScaleDelta: Float
+        get() = -temperatureDelta * 0.0025f
+}
+
+enum class LutPreset(val displayName: String, val description: String) {
+    None("No 3D LUT", "Bypass LUT stage"),
+    Rec709Studio("Rec.709 Broadcast Master", "Standard ITU-R BT.709 studio gamut"),
+    Kodak2383Print("Kodak 2383 Film LUT", "Classic cinema print film emulation"),
+    Fuji3513Print("Fujifilm 3513DI LUT", "Rich theatrical digital intermediate"),
+    TealOrangeMaster("Hollywood Teal-Orange LUT", "Split-toned shadow/highlight grade"),
+    LogToRec709("C-Log / S-Log3 to Rec.709", "Normalizes flat camera log profiles");
+
+    val label: String
+        get() = displayName
+
+    val title: String
+        get() = displayName
+}
+
+enum class RgbCurvePreset(val displayName: String, val gammaOffset: Float, val contrastBoost: Int) {
+    Linear("Linear (1:1)", 1.0f, 0),
+    SCurveContrast("Cinema S-Curve", 0.96f, 16),
+    LiftedMatteBlacks("Lifted Matte Blacks", 1.08f, -6),
+    SoftHighlightRoll("Soft Highlight Roll-Off", 1.04f, 8);
+
+    val label: String
+        get() = displayName
+
+    val title: String
+        get() = displayName
+
+    companion object {
+        val CinemaSCurve: RgbCurvePreset get() = SCurveContrast
+        val FilmFadeToe: RgbCurvePreset get() = LiftedMatteBlacks
+        val HighlightRollOff: RgbCurvePreset get() = SoftHighlightRoll
+    }
 }
 
 enum class CompressionMode(
@@ -244,14 +739,18 @@ enum class SocialMediaPreset(
 data class DeviceHardwareCapabilities(
     val displayRefreshRateHz: Int = 60,
     val supportedDisplayModesHz: List<Int> = listOf(60),
-    val supportedFpsOptions: List<Int> = listOf(24, 30, 50, 60, 90, 120),
+    val supportedFpsOptions: List<Int> = listOf(24, 25, 30, 50, 60, 90, 120),
     val maxHardwareFps1080p: Int = 120,
     val maxHardwareFps4k: Int = 60,
     val supportedCodecs: List<String> = listOf("H.264", "H.265"),
+    val supportedContainers: List<String> = listOf("MP4", "MOV", "MKV", "WebM"),
     val hardwareEncoderNames: List<String> = emptyList(),
     val hardwareDecoderNames: List<String> = emptyList(),
     val maxSupportedBitrateKbps: Int = 80000,
     val supportsHdrDisplay: Boolean = false,
+    val supports8kCloudOrLocal: Boolean = false,
+    val freeStorageBytes: Long = 8L * 1024L * 1024L * 1024L,
+    val totalStorageBytes: Long = 64L * 1024L * 1024L * 1024L,
     val recommendedFps: Int = 60,
     val recommendedResolution: String = "1080p",
     val recommendedPerformanceMode: ProcessingPerformanceMode = ProcessingPerformanceMode.Elite
@@ -299,6 +798,7 @@ data class VideoMetadata(
         get() {
             val shortSide = minOf(displayWidth, displayHeight)
             return when {
+                shortSide >= 4320 -> "8K"
                 shortSide >= 2160 -> "4K"
                 shortSide >= 1440 -> "2K"
                 shortSide >= 1080 -> "1080p"
@@ -353,11 +853,38 @@ data class EnhancementAdjustments(
     val shadows: Int = 0,
     val tint: Int = 0,
     val gamma: Float = 1.0f,
-    // Detail & Restoration
+    val hslHueShift: Int = 0,
+    val hslLightnessShift: Int = 0,
+    val colorBalanceRedCyan: Int = 0,
+    val colorBalanceBlueYellow: Int = 0,
+    val skinToneProtection: Boolean = true,
+    val lutPreset: LutPreset = LutPreset.None,
+    val rgbCurvePreset: RgbCurvePreset = RgbCurvePreset.Linear,
+    // Creative Filters Library (Kodak, Fujifilm, Vintage, Cinematic, etc.)
+    val creativeFilter: CreativeFilterPreset = CreativeFilterPreset.None,
+    val filterIntensity: Int = 85, // 0..100%
+    // Image Quality, Super-Resolution & Restoration
     val sharpness: Int = 20,
     val denoise: Int = 10,
+    val temporalDenoise: Boolean = true,
+    val superResolution: Int = 0,
+    val detailRecovery: Int = 15,
+    val edgeEnhancement: Int = 10,
+    val filmGrain: Int = 0,
+    val debanding: Int = 10,
+    val artifactReduction: Int = 12,
     val deinterlace: Boolean = false,
     val cinematicProfile: CinematicColorProfile = CinematicColorProfile.Neutral,
+    // Motion, Optical Flow & Stabilization
+    val motionInterpolationMode: MotionInterpolationMode = MotionInterpolationMode.OpticalFlowStandard,
+    val sceneCutDetection: Boolean = true,
+    val ghostingReduction: Boolean = true,
+    val motionBlurReduction: Boolean = false,
+    val vfrToCfrConversion: Boolean = true,
+    val temporalConsistency: Boolean = true,
+    val videoStabilization: Boolean = false,
+    val rollingShutterCorrection: Boolean = false,
+    val slowMotionFactor: Float = 1.0f, // 1.0f (Normal), 0.5f (2x Slow-Mo), 0.25f (4x Optical Slow-Mo)
     // Orientation & Aspect Ratio Preservation / Framing
     val cropRatio: String = "Original",
     val aspectRatioMode: AspectRatioMode = AspectRatioMode.Original,
@@ -367,8 +894,13 @@ data class EnhancementAdjustments(
     fun isDefault(): Boolean =
         brightness == 0 && contrast == 0 && saturation == 0 && temperature == 0 &&
             exposure == 0 && vibrance == 0 && highlights == 0 && shadows == 0 &&
-            gamma == 1.0f && tint == 0 &&
-            sharpness == 0 && denoise == 0 && !deinterlace &&
+            gamma == 1.0f && tint == 0 && hslHueShift == 0 && hslLightnessShift == 0 &&
+            colorBalanceRedCyan == 0 && colorBalanceBlueYellow == 0 &&
+            lutPreset == LutPreset.None && rgbCurvePreset == RgbCurvePreset.Linear &&
+            creativeFilter == CreativeFilterPreset.None &&
+            sharpness == 0 && denoise == 0 && superResolution == 0 && detailRecovery == 0 &&
+            edgeEnhancement == 0 && filmGrain == 0 && debanding == 0 && !deinterlace &&
+            !videoStabilization && !rollingShutterCorrection && slowMotionFactor == 1.0f &&
             cinematicProfile == CinematicColorProfile.Neutral &&
             cropRatio == "Original" && aspectRatioMode == AspectRatioMode.Original &&
             rotationDegrees == 0
@@ -385,10 +917,35 @@ data class EnhancementAdjustments(
             shadows = 0,
             tint = 0,
             gamma = 1.0f,
+            hslHueShift = 0,
+            hslLightnessShift = 0,
+            colorBalanceRedCyan = 0,
+            colorBalanceBlueYellow = 0,
+            skinToneProtection = true,
+            lutPreset = LutPreset.None,
+            rgbCurvePreset = RgbCurvePreset.Linear,
+            creativeFilter = CreativeFilterPreset.None,
+            filterIntensity = 85,
             sharpness = 0,
             denoise = 0,
+            temporalDenoise = false,
+            superResolution = 0,
+            detailRecovery = 0,
+            edgeEnhancement = 0,
+            filmGrain = 0,
+            debanding = 0,
+            artifactReduction = 0,
             deinterlace = false,
             cinematicProfile = CinematicColorProfile.Neutral,
+            motionInterpolationMode = MotionInterpolationMode.CadenceLock,
+            sceneCutDetection = true,
+            ghostingReduction = true,
+            motionBlurReduction = false,
+            vfrToCfrConversion = true,
+            temporalConsistency = false,
+            videoStabilization = false,
+            rollingShutterCorrection = false,
+            slowMotionFactor = 1.0f,
             cropRatio = "Original",
             aspectRatioMode = AspectRatioMode.Original,
             scaleToFillCrop = false,
@@ -398,18 +955,19 @@ data class EnhancementAdjustments(
 }
 
 data class ExportConfiguration(
-    val resolution: String = "1080p", // "720p", "1080p", "2K", "4K", "Original"
-    val fps: Int = 60,                // 24, 30, 50, 60, 90, 120
-    val codec: String = "H.264",      // "H.264", "H.265", "AV1"
+    val resolution: String = "1080p", // "720p", "1080p", "2K", "4K", "8K", "Original"
+    val fps: Int = 60,                // 24, 25, 30, 50, 60, 90, 120
+    val codec: String = "H.264",      // "H.264", "H.265", "AV1", "ProRes"
     val bitrateMode: String = "Auto", // "Auto", "Custom"
     val customBitrateKbps: Int = 14000,
-    val containerFormat: String = "MP4", // "MP4", "MOV", "MKV"
+    val containerFormat: String = "MP4", // "MP4", "MOV", "MKV", "WebM"
     val performanceMode: ProcessingPerformanceMode = ProcessingPerformanceMode.Elite,
     val selectedSocialPreset: SocialMediaPreset = SocialMediaPreset.TikTok,
     val socialOptimizationEnabled: Boolean = true, // CFR lock, BT.709, faststart, platform ceiling
     // Advanced Export / HQ Encoder Controls
     val crf: Int = 18,
-    val rateControl: String = "CBR/VBR", // "CRF", "CBR", "VBR"
+    val rateControl: String = "CBR", // "CBR", "VBR", "CRF"
+    val useHardwareEncoder: Boolean = true, // Hardware MediaCodec vs Software fallback
     val encoderPreset: String = "medium", // "ultrafast", "fast", "medium", "slow"
     val profileLevel: String = "High@L4.2",
     val keyframeIntervalSec: Int = 2,
@@ -429,12 +987,13 @@ data class ExportConfiguration(
      * and ProcessingPerformanceMode (Lite / Elite / Max).
      */
     fun effectiveBitrateKbps(isCompressionWorkflow: Boolean = false): Int {
-        if (bitrateMode == "Custom") return customBitrateKbps.coerceIn(500, 160000)
+        if (bitrateMode == "Custom") return customBitrateKbps.coerceIn(500, 240000)
         val base1080p30 = when (resolution) {
             "720p" -> 6500
             "1080p" -> 12000
             "2K" -> 24000
             "4K" -> 45000
+            "8K" -> 85000
             else -> 12000
         }
         val fpsMultiplier = when {
@@ -442,12 +1001,13 @@ data class ExportConfiguration(
             fps >= 90 -> 1.80f
             fps >= 60 -> 1.45f
             fps >= 50 -> 1.30f
-            fps <= 24 -> 0.88f
+            fps <= 25 -> 0.90f
             else -> 1.0f
         }
         val codecMultiplier = when (codec) {
             "H.265" -> 0.78f
             "AV1" -> 0.70f
+            "ProRes" -> 2.40f
             else -> 1.0f
         }
         val modeFactor = if (isCompressionWorkflow) {
@@ -455,7 +1015,7 @@ data class ExportConfiguration(
         } else {
             performanceMode.bitrateMultiplier
         }
-        return (base1080p30 * fpsMultiplier * codecMultiplier * modeFactor).roundToInt().coerceIn(800, 160000)
+        return (base1080p30 * fpsMultiplier * codecMultiplier * modeFactor).roundToInt().coerceIn(800, 240000)
     }
 
     /**
@@ -485,6 +1045,7 @@ data class ExportConfiguration(
             "1080p" -> 1080
             "2K" -> 1440
             "4K" -> 2160
+            "8K" -> 4320
             "Original" -> minOf(uprightW, uprightH)
             else -> 1080
         }
@@ -510,7 +1071,14 @@ data class ExportConfiguration(
         "1080p" -> 1080
         "2K" -> 1440
         "4K" -> 2160
+        "8K" -> 4320
         else -> sourceHeight
+    }
+
+    fun requiresCloudAssist(deviceCapabilities: DeviceHardwareCapabilities): Boolean {
+        return resolution == "8K" ||
+            (codec == "AV1" && "AV1" !in deviceCapabilities.supportedCodecs) ||
+            (resolution == "4K" && fps > deviceCapabilities.maxHardwareFps4k)
     }
 }
 
@@ -544,7 +1112,7 @@ data class JobItem(
     val operationType: String,
     val executionRoute: String,
     val configSummary: String,
-    val status: String, // queued, processing, paused, completed, failed, cancelled
+    val status: String, // queued, uploading, processing, encoding, finalizing, paused, completed, failed, cancelled
     val progressPercent: Int,
     val errorCode: String? = null,
     val errorMessage: String? = null,
@@ -615,7 +1183,7 @@ object BuiltInPresets {
         ),
         PresetItem(
             id = "builtin_hq_120fps_smooth",
-            name = "Ultra Smooth 120FPS",
+            name = "Ultra Smooth 120FPS Optical Flow",
             category = "hq_encoder",
             resolution = "1080p",
             fps = 120,
@@ -630,6 +1198,46 @@ object BuiltInPresets {
             saturation = 10,
             temperature = 0,
             sharpness = 25,
+            denoise = 8,
+            isBuiltIn = true
+        ),
+        PresetItem(
+            id = "builtin_hq_kodak_portra",
+            name = "Kodak Portra 400 Cinema 60FPS",
+            category = "film_preset",
+            resolution = "1080p",
+            fps = 60,
+            codec = "H.264",
+            bitrateMode = "Custom",
+            bitrateKbps = 16500,
+            containerFormat = "MP4",
+            crf = 18,
+            encoderPreset = "medium",
+            brightness = 6,
+            contrast = 10,
+            saturation = 8,
+            temperature = 14,
+            sharpness = 18,
+            denoise = 10,
+            isBuiltIn = true
+        ),
+        PresetItem(
+            id = "builtin_hq_fuji_velvia",
+            name = "Fujifilm Velvia 50 Landscape 4K",
+            category = "film_preset",
+            resolution = "4K",
+            fps = 60,
+            codec = "H.265",
+            bitrateMode = "Custom",
+            bitrateKbps = 42000,
+            containerFormat = "MP4",
+            crf = 16,
+            encoderPreset = "medium",
+            brightness = 2,
+            contrast = 22,
+            saturation = 24,
+            temperature = -4,
+            sharpness = 30,
             denoise = 8,
             isBuiltIn = true
         ),
